@@ -10,6 +10,22 @@
     android:paddingTop="@dimen/normal_margin">
 
     <ImageView
+        android:id="@+id/bottom_rename"
+        android:layout_width="@dimen/list_touch_target_min"
+        android:layout_height="@dimen/list_touch_target_min"
+        android:layout_marginBottom="@dimen/normal_margin"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="@string/rename"
+        android:padding="@dimen/normal_margin"
+        android:src="@drawable/ic_rename_vector"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toStartOf="@+id/bottom_favorite"
+        app:layout_constraintHorizontal_bias="0.5"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintVertical_bias="0.0" />
+
+    <ImageView
         android:id="@+id/bottom_favorite"
         android:layout_width="@dimen/list_touch_target_min"
         android:layout_height="@dimen/list_touch_target_min"
@@ -21,7 +37,7 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toStartOf="@+id/bottom_edit"
         app:layout_constraintHorizontal_bias="0.5"
-        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintStart_toEndOf="@+id/bottom_rename"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintVertical_bias="0.0" />
 
@@ -163,25 +179,9 @@
         android:padding="@dimen/normal_margin"
         android:src="@drawable/ic_hide_vector"
         app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toStartOf="@+id/bottom_rename"
-        app:layout_constraintHorizontal_bias="0.5"
-        app:layout_constraintStart_toEndOf="@+id/bottom_show_on_map"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintVertical_bias="0.0" />
-
-    <ImageView
-        android:id="@+id/bottom_rename"
-        android:layout_width="@dimen/list_touch_target_min"
-        android:layout_height="@dimen/list_touch_target_min"
-        android:layout_marginBottom="@dimen/normal_margin"
-        android:background="?attr/selectableItemBackgroundBorderless"
-        android:contentDescription="@string/rename"
-        android:padding="@dimen/normal_margin"
-        android:src="@drawable/ic_rename_vector"
-        app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toStartOf="@+id/bottom_set_as"
         app:layout_constraintHorizontal_bias="0.5"
-        app:layout_constraintStart_toEndOf="@+id/bottom_toggle_file_visibility"
+        app:layout_constraintStart_toEndOf="@+id/bottom_show_on_map"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintVertical_bias="0.0" />
 
@@ -197,7 +197,7 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toStartOf="@+id/bottom_copy"
         app:layout_constraintHorizontal_bias="0.5"
-        app:layout_constraintStart_toEndOf="@+id/bottom_rename"
+        app:layout_constraintStart_toEndOf="@+id/bottom_toggle_file_visibility"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintVertical_bias="0.0" />
 

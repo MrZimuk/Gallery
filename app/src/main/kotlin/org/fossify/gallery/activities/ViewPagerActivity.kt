@@ -322,7 +322,7 @@ class ViewPagerActivity : BaseViewerActivity(), ViewPager.OnPageChangeListener, 
                     if (rotationDegrees != 0) {
                         MenuItem.SHOW_AS_ACTION_ALWAYS
                     } else {
-                        MenuItem.SHOW_AS_ACTION_IF_ROOM
+                        MenuItem.SHOW_AS_ACTION_NEVER
                     }
                 )
             }

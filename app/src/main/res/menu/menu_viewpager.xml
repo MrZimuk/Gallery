@@ -23,7 +23,7 @@
         android:id="@+id/menu_rotate"
         android:icon="@drawable/ic_rotate_right_vector"
         android:title="@string/rotate"
-        app:showAsAction="ifRoom">
+        app:showAsAction="never">
         <menu>
             <item
                 android:id="@+id/menu_rotate_right"
@@ -44,17 +44,17 @@
     <item
         android:id="@+id/menu_rename"
         android:title="@string/rename"
-        app:showAsAction="never" />
+        app:showAsAction="ifRoom" />
     <item
         android:id="@+id/menu_hide"
         android:icon="@drawable/ic_hide_vector"
         android:title="@string/hide"
-        app:showAsAction="ifRoom" />
+        app:showAsAction="never" />
     <item
         android:id="@+id/menu_unhide"
         android:icon="@drawable/ic_unhide_vector"
         android:title="@string/unhide"
-        app:showAsAction="ifRoom" />
+        app:showAsAction="never" />
     <item
         android:id="@+id/menu_copy_to_clipboard"
         android:showAsAction="never"
@@ -89,22 +89,22 @@
         android:id="@+id/menu_edit"
         android:icon="@drawable/ic_edit_vector"
         android:title="@string/edit"
-        app:showAsAction="ifRoom" />
+        app:showAsAction="never" />
     <item
         android:id="@+id/menu_add_to_favorites"
         android:icon="@drawable/ic_star_outline_vector"
         android:title="@string/add_to_favorites"
-        app:showAsAction="ifRoom" />
+        app:showAsAction="never" />
     <item
         android:id="@+id/menu_remove_from_favorites"
         android:icon="@drawable/ic_star_vector"
         android:title="@string/remove_from_favorites"
-        app:showAsAction="ifRoom" />
+        app:showAsAction="never" />
     <item
         android:id="@+id/menu_restore_file"
-        android:showAsAction="never"
+        android:icon="@drawable/restore_file"
         android:title="@string/restore_this_file"
-        app:showAsAction="never" />
+        app:showAsAction="ifRoom" />
     <item
         android:id="@+id/menu_change_orientation"
         android:title="@string/change_orientation"
@@ -143,10 +143,10 @@
         android:id="@+id/menu_slideshow"
         android:icon="@drawable/ic_slideshow_vector"
         android:title="@string/slideshow"
-        app:showAsAction="ifRoom" />
+        app:showAsAction="never" />
     <item
         android:id="@+id/menu_settings"
         android:icon="@drawable/ic_settings_cog_vector"
         android:title="@string/settings"
-        app:showAsAction="ifRoom" />
+        app:showAsAction="never" />
 </menu>

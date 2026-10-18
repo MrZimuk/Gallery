@@ -62,9 +62,10 @@
         app:showAsAction="never" />
     <item
         android:id="@+id/cab_move_to"
-        android:showAsAction="never"
+        android:icon="@drawable/ic_move_vector"
+        android:showAsAction="always"
         android:title="@string/move_to"
-        app:showAsAction="never" />
+        app:showAsAction="always" />
     <item
         android:id="@+id/cab_create_shortcut"
         android:showAsAction="never"
