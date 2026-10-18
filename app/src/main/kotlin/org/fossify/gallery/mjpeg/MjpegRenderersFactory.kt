@@ -23,6 +23,15 @@ class MjpegRenderersFactory(context: Context) : DefaultRenderersFactory(context)
         allowedVideoJoiningTimeMs: Long,
         out: ArrayList<Renderer>
     ) {
+        out.add(
+            0,
+            BitmapFactoryVideoRenderer(
+                allowedVideoJoiningTimeMs,
+                eventHandler,
+                eventListener,
+                MAX_DROPPED_VIDEO_FRAME_COUNT_TO_NOTIFY
+            )
+        )
         super.buildVideoRenderers(
             context,
             extensionRendererMode,
@@ -32,14 +41,6 @@ class MjpegRenderersFactory(context: Context) : DefaultRenderersFactory(context)
             eventListener,
             allowedVideoJoiningTimeMs,
             out
-        )
-        out.add(
-            BitmapFactoryVideoRenderer(
-                allowedVideoJoiningTimeMs,
-                eventHandler,
-                eventListener,
-                MAX_DROPPED_VIDEO_FRAME_COUNT_TO_NOTIFY
-            )
         )
     }
 }

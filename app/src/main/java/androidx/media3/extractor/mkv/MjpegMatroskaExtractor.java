@@ -2343,6 +2343,10 @@ public class MjpegMatroskaExtractor implements Extractor {
           break;
         case CODEC_ID_MJPEG:
           mimeType = MimeTypes.VIDEO_MJPEG;
+          maxInputSize =
+              width != Format.NO_VALUE && height != Format.NO_VALUE
+                  ? Math.max(width * height * 2, 2 * 1024 * 1024)
+                  : 4 * 1024 * 1024;
           break;
         case CODEC_ID_VORBIS:
           mimeType = MimeTypes.AUDIO_VORBIS;

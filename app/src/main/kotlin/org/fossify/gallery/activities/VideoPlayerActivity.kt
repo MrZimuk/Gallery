@@ -446,6 +446,9 @@ open class VideoPlayerActivity : BaseViewerActivity(), SeekBar.OnSeekBarChangeLi
             }
 
             override fun onPlayerErrorChanged(error: PlaybackException?) {
+                if (error != null) {
+                    android.util.Log.e("VideoPlayerActivity", "onPlayerErrorChanged: ${error.errorCodeName}", error)
+                }
                 binding.errorMessageHolder.errorMessage.apply {
                     if (error != null) {
                         text = error.getFriendlyMessage(context)

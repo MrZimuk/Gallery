@@ -19,12 +19,18 @@ class BitmapFactoryDecoder(buffers: Int) :
         arrayOfNulls<BitmapDecoderOutputBuffer>(buffers) as Array<BitmapDecoderOutputBuffer>
     ) {
 
+    companion object {
+        private const val TAG = "BitmapFactoryDecoder"
+    }
+
     private val bitmapQueue = ArrayBlockingQueue<Bitmap>(buffers)
     @Volatile
     private var outputMode: Int = C.VIDEO_OUTPUT_MODE_SURFACE_YUV
 
     fun recycle(bitmap: Bitmap) {
-        bitmapQueue.offer(bitmap)
+        if (!bitmap.isRecycled && bitmap.isMutable) {
+            bitmapQueue.offer(bitmap)
+        }
     }
 
     override fun createInputBuffer(): DecoderInputBuffer {
@@ -40,6 +46,7 @@ class BitmapFactoryDecoder(buffers: Int) :
     }
 
     override fun createUnexpectedDecodeException(error: Throwable): DecoderException {
+        android.util.Log.e(TAG, "Unexpected decode exception", error)
         return DecoderException(error)
     }
 
@@ -47,6 +54,7 @@ class BitmapFactoryDecoder(buffers: Int) :
         this.outputMode = outputMode
     }
 
+    @Suppress("TooGenericExceptionCaught")
     override fun decode(
         inputBuffer: DecoderInputBuffer,
         outputBuffer: BitmapDecoderOutputBuffer,
@@ -54,10 +62,11 @@ class BitmapFactoryDecoder(buffers: Int) :
     ): DecoderException? {
         outputBuffer.init(inputBuffer.timeUs, outputMode, null)
         val inputData = Util.castNonNull(inputBuffer.data)
+        val candidateBitmap = bitmapQueue.poll()
         val opts = BitmapFactory.Options().apply {
             inPreferredConfig = Bitmap.Config.ARGB_8888
             inMutable = true
-            inBitmap = bitmapQueue.poll()
+            inBitmap = candidateBitmap
             inJustDecodeBounds = outputBuffer.shouldBeSkipped || outputMode != C.VIDEO_OUTPUT_MODE_SURFACE_YUV
         }
 
@@ -77,20 +86,40 @@ class BitmapFactoryDecoder(buffers: Int) :
             length = bytes.size
         }
 
+        var bitmap: Bitmap? = null
         try {
-            val bitmap = BitmapFactory.decodeByteArray(bytes, offset, length, opts)
-            if (bitmap == null || opts.inJustDecodeBounds) {
-                outputBuffer.shouldBeSkipped = true
-            } else {
-                outputBuffer.bitmap = bitmap
-                outputBuffer.format = inputBuffer.format
-                outputBuffer.width = bitmap.width
-                outputBuffer.height = bitmap.height
+            bitmap = BitmapFactory.decodeByteArray(bytes, offset, length, opts)
+            if (bitmap == null && opts.inBitmap != null) {
+                // inBitmap reuse can return null on some Android versions without throwing
+                opts.inBitmap = null
+                bitmap = BitmapFactory.decodeByteArray(bytes, offset, length, opts)
             }
         } catch (e: IllegalArgumentException) {
-            return DecoderException(e)
+            if (opts.inBitmap != null) {
+                android.util.Log.w(TAG, "inBitmap reuse failed, retrying with new allocation", e)
+                opts.inBitmap = null
+                try {
+                    bitmap = BitmapFactory.decodeByteArray(bytes, offset, length, opts)
+                } catch (e2: Throwable) {
+                    android.util.Log.e(TAG, "Fallback decode failed", e2)
+                    return DecoderException("Failed to decode frame", e2)
+                }
+            } else {
+                android.util.Log.e(TAG, "decodeByteArray failed with IAE", e)
+                return DecoderException("Failed to decode frame", e)
+            }
         } catch (e: OutOfMemoryError) {
+            android.util.Log.e(TAG, "OOM decoding frame", e)
             return DecoderException("Failed to decode frame due to OOM", e)
+        }
+
+        if (bitmap == null || opts.inJustDecodeBounds) {
+            outputBuffer.shouldBeSkipped = true
+        } else {
+            outputBuffer.bitmap = bitmap
+            outputBuffer.format = inputBuffer.format
+            outputBuffer.width = bitmap.width
+            outputBuffer.height = bitmap.height
         }
         return null
     }

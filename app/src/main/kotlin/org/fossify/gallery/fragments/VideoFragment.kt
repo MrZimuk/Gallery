@@ -572,6 +572,9 @@ class VideoFragment : ViewPagerFragment(), TextureView.SurfaceTextureListener,
             }
 
             override fun onPlayerErrorChanged(error: PlaybackException?) {
+                if (error != null) {
+                    android.util.Log.e("VideoFragment", "onPlayerErrorChanged: ${error.errorCodeName}", error)
+                }
                 binding.errorMessageHolder.errorMessage.apply {
                     if (error != null) {
                         binding.videoPreview.beGone()
