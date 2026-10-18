@@ -28,6 +28,7 @@ import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
 import android.widget.Toast
 import androidx.core.graphics.drawable.toDrawable
+import org.fossify.gallery.mjpeg.MjpegThumbnailExtractor
 import androidx.exifinterface.media.ExifInterface
 import androidx.print.PrintHelper
 import androidx.viewpager.widget.ViewPager
@@ -1406,7 +1407,9 @@ class ViewPagerActivity : BaseViewerActivity(), ViewPager.OnPageChangeListener, 
                 flipSides = orientation == ExifInterface.ORIENTATION_ROTATE_90 || orientation == ExifInterface.ORIENTATION_ROTATE_270
             } catch (e: Exception) {
             }
-            val resolution = applicationContext.getResolution(getCurrentPath()) ?: return
+            val resolution = applicationContext.getResolution(getCurrentPath())
+                ?: MjpegThumbnailExtractor.getVideoResolution(getCurrentPath())
+                ?: return
             val width = if (flipSides) resolution.y else resolution.x
             val height = if (flipSides) resolution.x else resolution.y
             if (width > height) {

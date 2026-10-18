@@ -13,6 +13,7 @@ import org.fossify.gallery.helpers.*
 import org.fossify.gallery.models.Medium
 import java.io.File
 import com.awxkee.jxlcoder.JxlCoder
+import org.fossify.gallery.mjpeg.MjpegThumbnailExtractor
 
 abstract class ViewPagerFragment : Fragment() {
     var listener: FragmentListener? = null
@@ -113,7 +114,9 @@ abstract class ViewPagerFragment : Fragment() {
             }
             return resolution?.let { Point(it.width,it.height).formatAsResolution() }
         } else {
-            return context?.getResolution(file.absolutePath)?.formatAsResolution()
+            val res = context?.getResolution(file.absolutePath)
+                ?: MjpegThumbnailExtractor.getVideoResolution(file.absolutePath)
+            return res?.formatAsResolution()
         }
     }
 

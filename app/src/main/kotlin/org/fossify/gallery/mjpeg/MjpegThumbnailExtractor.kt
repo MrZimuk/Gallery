@@ -3,6 +3,7 @@ package org.fossify.gallery.mjpeg
 import android.content.res.AssetFileDescriptor
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Point
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import java.io.ByteArrayOutputStream
@@ -47,6 +48,48 @@ object MjpegThumbnailExtractor {
             indexOfSequence(bytes, 0, scanLimit, CODEC_ID_MPNG_BYTES) != -1 ||
             indexOfSequence(bytes, 0, scanLimit, CODEC_ID_V_PNG_BYTES) != -1 ||
             indexOfSequence(bytes, 0, scanLimit, CODEC_ID_PNG_BYTES) != -1
+    }
+
+    @Suppress("ReturnCount", "TooGenericExceptionCaught")
+    fun getVideoResolution(path: String): Point? {
+        return try {
+            val file = java.io.File(path)
+            if (!file.exists()) return null
+            val channel = FileInputStream(file).channel
+            val readSize = minOf(channel.size(), HEADER_SCAN_LIMIT.toLong()).toInt()
+            if (readSize < MIN_HEADER_SIZE) return null
+            val buffer = ByteBuffer.allocate(readSize)
+            while (buffer.hasRemaining()) {
+                val r = channel.read(buffer)
+                if (r <= 0) break
+            }
+            val bytes = buffer.array()
+            val totalRead = buffer.position()
+            if (!isMjpegHeader(bytes, totalRead)) return null
+
+            val candidates = ArrayList<Int>()
+            val pngStart = indexOfSequence(bytes, 0, totalRead, PNG_MAGIC)
+            if (pngStart != -1) {
+                candidates.add(pngStart)
+            }
+            val soi = indexOfSequence(bytes, 0, totalRead, SOI_MARKER)
+            if (soi != -1) {
+                candidates.add(soi)
+            }
+            candidates.sort()
+
+            val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            for (offset in candidates) {
+                BitmapFactory.decodeByteArray(bytes, offset, totalRead - offset, opts)
+                if (opts.outWidth > 0 && opts.outHeight > 0) {
+                    return Point(opts.outWidth, opts.outHeight)
+                }
+            }
+            null
+        } catch (e: Exception) {
+            Log.d(TAG, "getVideoResolution failed: ${e.message}")
+            null
+        }
     }
 
     @Suppress("TooGenericExceptionCaught")
