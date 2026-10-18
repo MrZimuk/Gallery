@@ -126,8 +126,7 @@ object MjpegThumbnailExtractor {
             }
             val totalRead = buffer.position()
             channel.position(savedPos)
-            val imageBytes = findImageBytes(buffer.array(), totalRead) ?: return null
-            decodeImage(imageBytes, targetWidth, targetHeight)
+            findAndDecodeImage(buffer.array(), totalRead, targetWidth, targetHeight)
         } catch (e: Exception) {
             Log.e(TAG, "extractBitmap(pfd) failed", e)
             null
@@ -148,8 +147,7 @@ object MjpegThumbnailExtractor {
             }
             val totalRead = buffer.position()
             channel.position(savedPos)
-            val imageBytes = findImageBytes(buffer.array(), totalRead) ?: return null
-            decodeImage(imageBytes, targetWidth, targetHeight)
+            findAndDecodeImage(buffer.array(), totalRead, targetWidth, targetHeight)
         } catch (e: Exception) {
             Log.e(TAG, "extractBitmap(afd) failed", e)
             null
@@ -174,8 +172,7 @@ object MjpegThumbnailExtractor {
     fun extractBitmap(stream: InputStream, targetWidth: Int, targetHeight: Int): Bitmap? {
         return try {
             val bytes = readStreamBytes(stream)
-            val imageBytes = findImageBytes(bytes, bytes.size) ?: return null
-            decodeImage(imageBytes, targetWidth, targetHeight)
+            findAndDecodeImage(bytes, bytes.size, targetWidth, targetHeight)
         } catch (e: Exception) {
             Log.e(TAG, "extractBitmap(stream) failed", e)
             null
@@ -203,21 +200,35 @@ object MjpegThumbnailExtractor {
             val bytes = ByteArray(len)
             byteBuffer.get(bytes)
             byteBuffer.position(savedPos)
-            val imageBytes = findImageBytes(bytes, len) ?: return null
-            decodeImage(imageBytes, targetWidth, targetHeight)
+            findAndDecodeImage(bytes, len, targetWidth, targetHeight)
         } catch (e: Exception) {
             Log.e(TAG, "extractBitmap(byteBuffer) failed", e)
             null
         }
     }
 
-    fun findImageBytes(buf: ByteArray, length: Int): ByteArray? {
-        val jpeg = findJpegBytes(buf, length)
-        if (jpeg != null) return jpeg
-        return findPngBytes(buf, length)
+    fun findAndDecodeImage(buf: ByteArray, length: Int, targetWidth: Int, targetHeight: Int): Bitmap? {
+        val candidates = ArrayList<Pair<Int, ByteArray>>()
+        val png = findPngBytesWithOffset(buf, length)
+        if (png != null) {
+            candidates.add(png)
+        }
+        val jpeg = findJpegBytesWithOffset(buf, length)
+        if (jpeg != null) {
+            candidates.add(jpeg)
+        }
+        candidates.sortBy { it.first }
+
+        for (candidate in candidates) {
+            val bitmap = decodeImage(candidate.second, targetWidth, targetHeight)
+            if (bitmap != null) {
+                return bitmap
+            }
+        }
+        return null
     }
 
-    fun findPngBytes(buf: ByteArray, length: Int): ByteArray? {
+    fun findPngBytesWithOffset(buf: ByteArray, length: Int): Pair<Int, ByteArray>? {
         val start = indexOfSequence(buf, 0, length, PNG_MAGIC)
         if (start == -1) return null
 
@@ -229,10 +240,10 @@ object MjpegThumbnailExtractor {
 
         val result = ByteArray(end - start)
         System.arraycopy(buf, start, result, 0, result.size)
-        return result
+        return Pair(start, result)
     }
 
-    fun findJpegBytes(buf: ByteArray, length: Int): ByteArray? {
+    fun findJpegBytesWithOffset(buf: ByteArray, length: Int): Pair<Int, ByteArray>? {
         val soi = indexOfSequence(buf, 0, length, SOI_MARKER)
         if (soi == -1) return null
 
@@ -244,7 +255,7 @@ object MjpegThumbnailExtractor {
 
         val result = ByteArray(eoi - soi)
         System.arraycopy(buf, soi, result, 0, result.size)
-        return result
+        return Pair(soi, result)
     }
 
     private fun findEoiOffset(buf: ByteArray, startOffset: Int, length: Int): Int {
