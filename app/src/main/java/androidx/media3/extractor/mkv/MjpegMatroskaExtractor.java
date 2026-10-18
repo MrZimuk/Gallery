@@ -22,6 +22,7 @@ import static java.lang.Math.max;
 import static java.lang.Math.min;
 import static java.lang.annotation.ElementType.TYPE_USE;
 
+import android.util.LruCache;
 import android.util.Pair;
 import android.util.SparseArray;
 import androidx.annotation.CallSuper;
@@ -437,6 +438,40 @@ public class MjpegMatroskaExtractor implements Extractor {
     TRACK_NAME_TO_ROTATION_DEGREES = Collections.unmodifiableMap(trackNameToRotationDegrees);
   }
 
+  private static final class CachedCuesData {
+    public final SparseArray<List<MatroskaSeekMap.CuePointData>> perTrackCues;
+    public final long durationUs;
+    public final int primarySeekTrackNumber;
+    public final long segmentContentPosition;
+    public final long segmentContentSize;
+
+    public CachedCuesData(
+        SparseArray<List<MatroskaSeekMap.CuePointData>> perTrackCues,
+        long durationUs,
+        int primarySeekTrackNumber,
+        long segmentContentPosition,
+        long segmentContentSize) {
+      this.perTrackCues = new SparseArray<>(perTrackCues.size());
+      for (int i = 0; i < perTrackCues.size(); i++) {
+        this.perTrackCues.put(perTrackCues.keyAt(i), new ArrayList<>(perTrackCues.valueAt(i)));
+      }
+      this.durationUs = durationUs;
+      this.primarySeekTrackNumber = primarySeekTrackNumber;
+      this.segmentContentPosition = segmentContentPosition;
+      this.segmentContentSize = segmentContentSize;
+    }
+  }
+
+  private static final LruCache<String, CachedCuesData> CUES_CACHE = new LruCache<>(10);
+
+  @Nullable
+  private String getCuesCacheKey() {
+    if (segmentContentPosition != C.INDEX_UNSET && cuesContentPosition != C.INDEX_UNSET) {
+      return segmentContentPosition + "_" + segmentContentSize + "_" + cuesContentPosition;
+    }
+    return null;
+  }
+
   private final EbmlReader reader;
   private final VarintReader varintReader;
   private final SparseArray<Track> tracks;
@@ -812,8 +847,37 @@ public class MjpegMatroskaExtractor implements Extractor {
         break;
       case ID_CLUSTER:
         if (!sentSeekMap) {
-          // We need to build cues before parsing the cluster.
-          if (seekForCuesEnabled && cuesContentPosition != C.INDEX_UNSET) {
+          String cacheKey = getCuesCacheKey();
+          CachedCuesData cached = (cacheKey != null) ? CUES_CACHE.get(cacheKey) : null;
+          if (cached != null) {
+            perTrackCues.clear();
+            for (int i = 0; i < cached.perTrackCues.size(); i++) {
+              perTrackCues.put(cached.perTrackCues.keyAt(i), new ArrayList<>(cached.perTrackCues.valueAt(i)));
+            }
+            primarySeekTrackNumber = cached.primarySeekTrackNumber;
+            if (durationUs == C.TIME_UNSET) {
+              durationUs = cached.durationUs;
+            }
+            MatroskaSeekMap seekMap =
+                new MatroskaSeekMap(
+                    perTrackCues,
+                    durationUs,
+                    primarySeekTrackNumber,
+                    segmentContentPosition,
+                    segmentContentSize);
+            extractorOutput.seekMap(seekMap);
+            sentSeekMap = true;
+            for (int i = 0; i < tracks.size(); i++) {
+              Track track = tracks.valueAt(i);
+              track.maybeAddThumbnailMetadata(
+                  perTrackCues, durationUs, segmentContentPosition, segmentContentSize);
+              if (!track.waitingForDtsAnalysis) {
+                track.assertOutputInitialized();
+                track.output.format(checkNotNull(track.format));
+              }
+            }
+            maybeEndTracks();
+          } else if (seekForCuesEnabled && cuesContentPosition != C.INDEX_UNSET) {
             // We know where the Cues element is located. Seek to request it.
             seekForCues = true;
           } else {
@@ -889,6 +953,17 @@ public class MjpegMatroskaExtractor implements Extractor {
             for (int i = 0; i < perTrackCues.size(); i++) {
               Collections.sort(perTrackCues.valueAt(i));
             }
+            String cacheKey = getCuesCacheKey();
+            if (cacheKey != null) {
+              CUES_CACHE.put(
+                  cacheKey,
+                  new CachedCuesData(
+                      perTrackCues,
+                      durationUs,
+                      primarySeekTrackNumber,
+                      segmentContentPosition,
+                      segmentContentSize));
+            }
             MatroskaSeekMap seekMap =
                 new MatroskaSeekMap(
                     perTrackCues,
@@ -955,9 +1030,9 @@ public class MjpegMatroskaExtractor implements Extractor {
         for (int i = 0; i < blockSampleCount; i++) {
           long sampleTimeUs = blockTimeUs + (i * track.defaultSampleDurationNs) / 1000;
           int sampleFlags = blockFlags;
-          if (i == 0 && !blockHasReferenceBlock) {
-            // If the ReferenceBlock element was not found in this block, then the first frame is a
-            // keyframe.
+          if ((i == 0 && !blockHasReferenceBlock) || isIntraFrameTrack(track)) {
+            // If the ReferenceBlock element was not found in this block, or if it's an intra frame track,
+            // then the frame is a keyframe.
             sampleFlags |= C.BUFFER_FLAG_KEY_FRAME;
           }
           int sampleSize = blockSampleSizes[i];
@@ -1559,6 +1634,7 @@ public class MjpegMatroskaExtractor implements Extractor {
           blockTimeUs = clusterTimecodeUs + scaleTimecodeToUs(timecode);
           boolean isKeyframe =
               track.type == C.TRACK_TYPE_AUDIO
+                  || isIntraFrameTrack(track)
                   || (id == ID_SIMPLE_BLOCK && (scratch.getData()[2] & 0x80) == 0x80);
           blockFlags = isKeyframe ? C.BUFFER_FLAG_KEY_FRAME : 0;
           blockState = BLOCK_STATE_DATA;
@@ -2073,6 +2149,22 @@ public class MjpegMatroskaExtractor implements Extractor {
    * @param currentPosition Current position of the input.
    * @return Whether the seek position was updated.
    */
+  private boolean isIntraFrameTrack(@Nullable Track track) {
+    if (track == null) {
+      return false;
+    }
+    return (track.format != null
+            && track.format.sampleMimeType != null
+            && (track.format.sampleMimeType.equals(MimeTypes.VIDEO_MJPEG)
+                || track.format.sampleMimeType.equals("video/mpng")
+                || track.format.sampleMimeType.equals("video/png")
+                || track.format.sampleMimeType.equals("video/x-png")))
+        || (track.codecId != null
+            && (track.codecId.equals(CODEC_ID_MJPEG)
+                || track.codecId.equals(CODEC_ID_PNG)
+                || track.codecId.equals(CODEC_ID_PNG_ISO)));
+  }
+
   private boolean maybeSeekForCues(PositionHolder seekPosition, long currentPosition) {
     if (seekForCues) {
       seekPositionAfterBuildingCues = currentPosition;

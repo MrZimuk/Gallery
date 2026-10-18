@@ -18,6 +18,7 @@ import androidx.media3.exoplayer.video.DecoderVideoRenderer
 import androidx.media3.exoplayer.video.VideoRendererEventListener
 
 @OptIn(UnstableApi::class)
+@Suppress("TooManyFunctions")
 class BitmapFactoryVideoRenderer(
     allowedJoiningTimeMs: Long,
     eventHandler: Handler?,
@@ -37,6 +38,7 @@ class BitmapFactoryVideoRenderer(
 
     private val rect = Rect()
     private var decoder: BitmapFactoryDecoder? = null
+    private var hasRenderedFirstFrame = false
 
     override fun createDecoder(format: Format, cryptoConfig: CryptoConfig?): BitmapFactoryDecoder {
         val newDecoder = BitmapFactoryDecoder(DECODER_BUFFER_COUNT)
@@ -45,6 +47,7 @@ class BitmapFactoryVideoRenderer(
     }
 
     override fun renderOutputBufferToSurface(outputBuffer: VideoDecoderOutputBuffer, surface: Surface) {
+        hasRenderedFirstFrame = true
         if (outputBuffer is BitmapDecoderOutputBuffer) {
             val bitmap = outputBuffer.bitmap
             if (bitmap != null) {
@@ -55,21 +58,47 @@ class BitmapFactoryVideoRenderer(
         outputBuffer.release()
     }
 
-    @Suppress("SwallowedException")
+    override fun isReady(): Boolean {
+        return if (hasRenderedFirstFrame && isSourceReady) true else super.isReady()
+    }
+
+    override fun onDisabled() {
+        hasRenderedFirstFrame = false
+        super.onDisabled()
+    }
+
+    override fun onReset() {
+        hasRenderedFirstFrame = false
+        super.onReset()
+    }
+
+    @Suppress("SwallowedException", "TooGenericExceptionCaught")
     private fun drawBitmapToSurface(bitmap: Bitmap, surface: Surface) {
+        var canvas: Canvas? = null
         try {
-            val canvas: Canvas = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                surface.lockHardwareCanvas()
-            } else {
+            canvas = try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    surface.lockHardwareCanvas()
+                } else {
+                    surface.lockCanvas(null)
+                }
+            } catch (e: Exception) {
                 surface.lockCanvas(null)
             }
-            rect.set(0, 0, canvas.width, canvas.height)
-            canvas.drawBitmap(bitmap, null, rect, null)
-            surface.unlockCanvasAndPost(canvas)
-        } catch (e: IllegalArgumentException) {
+            if (canvas != null) {
+                rect.set(0, 0, canvas.width, canvas.height)
+                canvas.drawBitmap(bitmap, null, rect, null)
+            }
+        } catch (e: Exception) {
             // Surface may be invalid or released
-        } catch (e: IllegalStateException) {
-            // Surface in an illegal state
+        } finally {
+            if (canvas != null) {
+                try {
+                    surface.unlockCanvasAndPost(canvas)
+                } catch (e: Exception) {
+                    // Surface may be invalid or released
+                }
+            }
         }
     }
 

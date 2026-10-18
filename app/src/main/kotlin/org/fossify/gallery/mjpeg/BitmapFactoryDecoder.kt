@@ -60,14 +60,14 @@ class BitmapFactoryDecoder(buffers: Int) :
         outputBuffer: BitmapDecoderOutputBuffer,
         reset: Boolean
     ): DecoderException? {
-        outputBuffer.init(inputBuffer.timeUs, outputMode, null)
+        outputBuffer.init(inputBuffer.timeUs, C.VIDEO_OUTPUT_MODE_SURFACE_YUV, null)
         val inputData = Util.castNonNull(inputBuffer.data)
         val candidateBitmap = bitmapQueue.poll()
         val opts = BitmapFactory.Options().apply {
             inPreferredConfig = Bitmap.Config.ARGB_8888
             inMutable = true
             inBitmap = candidateBitmap
-            inJustDecodeBounds = outputBuffer.shouldBeSkipped || outputMode != C.VIDEO_OUTPUT_MODE_SURFACE_YUV
+            inJustDecodeBounds = outputBuffer.shouldBeSkipped
         }
 
         val bytes: ByteArray
@@ -86,6 +86,11 @@ class BitmapFactoryDecoder(buffers: Int) :
             length = bytes.size
         }
 
+        if (length <= 0) {
+            outputBuffer.shouldBeSkipped = true
+            return null
+        }
+
         var bitmap: Bitmap? = null
         try {
             bitmap = BitmapFactory.decodeByteArray(bytes, offset, length, opts)
@@ -101,16 +106,15 @@ class BitmapFactoryDecoder(buffers: Int) :
                 try {
                     bitmap = BitmapFactory.decodeByteArray(bytes, offset, length, opts)
                 } catch (e2: Throwable) {
-                    android.util.Log.e(TAG, "Fallback decode failed", e2)
-                    return DecoderException("Failed to decode frame", e2)
+                    android.util.Log.w(TAG, "Fallback decode failed", e2)
                 }
             } else {
-                android.util.Log.e(TAG, "decodeByteArray failed with IAE", e)
-                return DecoderException("Failed to decode frame", e)
+                android.util.Log.w(TAG, "decodeByteArray failed with IAE", e)
             }
         } catch (e: OutOfMemoryError) {
             android.util.Log.e(TAG, "OOM decoding frame", e)
-            return DecoderException("Failed to decode frame due to OOM", e)
+        } catch (e: Exception) {
+            android.util.Log.e(TAG, "Unexpected error decoding frame", e)
         }
 
         if (bitmap == null || opts.inJustDecodeBounds) {
