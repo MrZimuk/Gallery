@@ -21,11 +21,21 @@ object MjpegThumbnailExtractor {
     private const val MARKER_PREFIX = 0xFF
     private const val MARKER_EOI_BYTE = 0xD9
     private const val STUFFED_BYTE = 0x00
+    private const val PNG_IEND_CHUNK_OVERHEAD = 8 // 'IEND' (4 bytes) + CRC (4 bytes)
 
     private val EBML_HEADER = byteArrayOf(0x1A.toByte(), 0x45.toByte(), 0xDF.toByte(), 0xA3.toByte())
     private val CODEC_ID_MJPEG_BYTES = "V_MJPEG".toByteArray(Charsets.US_ASCII)
+    private val CODEC_ID_MPNG_BYTES = "MPNG".toByteArray(Charsets.US_ASCII)
+    private val CODEC_ID_PNG_BYTES = "PNG".toByteArray(Charsets.US_ASCII)
+    private val CODEC_ID_V_PNG_BYTES = "V_PNG".toByteArray(Charsets.US_ASCII)
+
     private val SOI_MARKER = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte())
     private val SOS_MARKER = byteArrayOf(0xFF.toByte(), 0xDA.toByte())
+    private val PNG_MAGIC = byteArrayOf(
+        0x89.toByte(), 0x50.toByte(), 0x4E.toByte(), 0x47.toByte(),
+        0x0D.toByte(), 0x0A.toByte(), 0x1A.toByte(), 0x0A.toByte()
+    )
+    private val PNG_IEND = "IEND".toByteArray(Charsets.US_ASCII)
 
     fun isMjpegHeader(bytes: ByteArray, length: Int): Boolean {
         if (length < MIN_HEADER_SIZE) return false
@@ -33,7 +43,10 @@ object MjpegThumbnailExtractor {
             if (bytes[i] != EBML_HEADER[i]) return false
         }
         val scanLimit = minOf(length, HEADER_SCAN_LIMIT)
-        return indexOfSequence(bytes, 0, scanLimit, CODEC_ID_MJPEG_BYTES) != -1
+        return indexOfSequence(bytes, 0, scanLimit, CODEC_ID_MJPEG_BYTES) != -1 ||
+            indexOfSequence(bytes, 0, scanLimit, CODEC_ID_MPNG_BYTES) != -1 ||
+            indexOfSequence(bytes, 0, scanLimit, CODEC_ID_V_PNG_BYTES) != -1 ||
+            indexOfSequence(bytes, 0, scanLimit, CODEC_ID_PNG_BYTES) != -1
     }
 
     @Suppress("TooGenericExceptionCaught")
@@ -113,8 +126,8 @@ object MjpegThumbnailExtractor {
             }
             val totalRead = buffer.position()
             channel.position(savedPos)
-            val jpeg = findJpegBytes(buffer.array(), totalRead) ?: return null
-            decodeJpeg(jpeg, targetWidth, targetHeight)
+            val imageBytes = findImageBytes(buffer.array(), totalRead) ?: return null
+            decodeImage(imageBytes, targetWidth, targetHeight)
         } catch (e: Exception) {
             Log.e(TAG, "extractBitmap(pfd) failed", e)
             null
@@ -135,8 +148,8 @@ object MjpegThumbnailExtractor {
             }
             val totalRead = buffer.position()
             channel.position(savedPos)
-            val jpeg = findJpegBytes(buffer.array(), totalRead) ?: return null
-            decodeJpeg(jpeg, targetWidth, targetHeight)
+            val imageBytes = findImageBytes(buffer.array(), totalRead) ?: return null
+            decodeImage(imageBytes, targetWidth, targetHeight)
         } catch (e: Exception) {
             Log.e(TAG, "extractBitmap(afd) failed", e)
             null
@@ -161,8 +174,8 @@ object MjpegThumbnailExtractor {
     fun extractBitmap(stream: InputStream, targetWidth: Int, targetHeight: Int): Bitmap? {
         return try {
             val bytes = readStreamBytes(stream)
-            val jpeg = findJpegBytes(bytes, bytes.size) ?: return null
-            decodeJpeg(jpeg, targetWidth, targetHeight)
+            val imageBytes = findImageBytes(bytes, bytes.size) ?: return null
+            decodeImage(imageBytes, targetWidth, targetHeight)
         } catch (e: Exception) {
             Log.e(TAG, "extractBitmap(stream) failed", e)
             null
@@ -190,12 +203,33 @@ object MjpegThumbnailExtractor {
             val bytes = ByteArray(len)
             byteBuffer.get(bytes)
             byteBuffer.position(savedPos)
-            val jpeg = findJpegBytes(bytes, len) ?: return null
-            decodeJpeg(jpeg, targetWidth, targetHeight)
+            val imageBytes = findImageBytes(bytes, len) ?: return null
+            decodeImage(imageBytes, targetWidth, targetHeight)
         } catch (e: Exception) {
             Log.e(TAG, "extractBitmap(byteBuffer) failed", e)
             null
         }
+    }
+
+    fun findImageBytes(buf: ByteArray, length: Int): ByteArray? {
+        val jpeg = findJpegBytes(buf, length)
+        if (jpeg != null) return jpeg
+        return findPngBytes(buf, length)
+    }
+
+    fun findPngBytes(buf: ByteArray, length: Int): ByteArray? {
+        val start = indexOfSequence(buf, 0, length, PNG_MAGIC)
+        if (start == -1) return null
+
+        val iend = indexOfSequence(buf, start, length, PNG_IEND)
+        if (iend == -1) return null
+
+        val end = iend + PNG_IEND_CHUNK_OVERHEAD
+        if (end > length) return null
+
+        val result = ByteArray(end - start)
+        System.arraycopy(buf, start, result, 0, result.size)
+        return result
     }
 
     fun findJpegBytes(buf: ByteArray, length: Int): ByteArray? {
@@ -229,17 +263,17 @@ object MjpegThumbnailExtractor {
         return -1
     }
 
-    private fun decodeJpeg(jpegBytes: ByteArray, targetWidth: Int, targetHeight: Int): Bitmap? {
+    private fun decodeImage(imageBytes: ByteArray, targetWidth: Int, targetHeight: Int): Bitmap? {
         val opts = BitmapFactory.Options().apply {
             inJustDecodeBounds = true
         }
-        BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size, opts)
+        BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size, opts)
         if (opts.outWidth <= 0 || opts.outHeight <= 0) return null
 
         opts.inSampleSize = calculateInSampleSize(opts.outWidth, opts.outHeight, targetWidth, targetHeight)
         opts.inJustDecodeBounds = false
         opts.inPreferredConfig = Bitmap.Config.ARGB_8888
-        return BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size, opts)
+        return BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size, opts)
     }
 
     private fun calculateInSampleSize(srcWidth: Int, srcHeight: Int, reqWidth: Int, reqHeight: Int): Int {

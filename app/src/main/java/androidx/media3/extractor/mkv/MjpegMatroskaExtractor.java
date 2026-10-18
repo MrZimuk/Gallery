@@ -152,6 +152,8 @@ public class MjpegMatroskaExtractor implements Extractor {
   private static final String CODEC_ID_FOURCC = "V_MS/VFW/FOURCC";
   private static final String CODEC_ID_THEORA = "V_THEORA";
   private static final String CODEC_ID_MJPEG = "V_MJPEG";
+  private static final String CODEC_ID_PNG = "V_PNG";
+  private static final String CODEC_ID_PNG_ISO = "V_PNG/ISO/RGBA";
   private static final String CODEC_ID_VORBIS = "A_VORBIS";
   private static final String CODEC_ID_OPUS = "A_OPUS";
   private static final String CODEC_ID_AAC = "A_AAC";
@@ -303,6 +305,14 @@ public class MjpegMatroskaExtractor implements Extractor {
   private static final int FOURCC_COMPRESSION_DIVX = 0x58564944;
   private static final int FOURCC_COMPRESSION_H263 = 0x33363248;
   private static final int FOURCC_COMPRESSION_VC1 = 0x31435657;
+  private static final int FOURCC_COMPRESSION_MPNG = 0x474E504D;
+  private static final int FOURCC_COMPRESSION_PNG = 0x20474E50;
+  private static final int FOURCC_COMPRESSION_PNG_LOWER = 0x20676E70;
+  private static final int FOURCC_COMPRESSION_MPNG_LOWER = 0x676E706D;
+  private static final int FOURCC_COMPRESSION_MJPG = 0x47504A4D;
+  private static final int FOURCC_COMPRESSION_MJPG_LOWER = 0x67706A6D;
+  private static final int FOURCC_COMPRESSION_JPEG = 0x4745504A;
+  private static final int FOURCC_COMPRESSION_JPEG_LOWER = 0x6765706A;
 
   /** The maximum number of chunks to scan when searching for a thumbnail. */
   private static final int MAX_CHUNKS_TO_SCAN_FOR_THUMBNAIL = 20;
@@ -2101,7 +2111,9 @@ public class MjpegMatroskaExtractor implements Extractor {
       case CODEC_ID_H265:
       case CODEC_ID_FOURCC:
       case CODEC_ID_THEORA:
-        case CODEC_ID_MJPEG:
+      case CODEC_ID_MJPEG:
+      case CODEC_ID_PNG:
+      case CODEC_ID_PNG_ISO:
       case CODEC_ID_OPUS:
       case CODEC_ID_VORBIS:
       case CODEC_ID_AAC:
@@ -2335,6 +2347,18 @@ public class MjpegMatroskaExtractor implements Extractor {
               parseFourCcPrivate(new ParsableByteArray(getCodecPrivate(codecId)));
           mimeType = pair.first;
           initializationData = pair.second;
+          maxInputSize =
+              width != Format.NO_VALUE && height != Format.NO_VALUE
+                  ? Math.max(width * height * 4, 2 * 1024 * 1024)
+                  : 4 * 1024 * 1024;
+          break;
+        case CODEC_ID_PNG:
+        case CODEC_ID_PNG_ISO:
+          mimeType = "video/mpng";
+          maxInputSize =
+              width != Format.NO_VALUE && height != Format.NO_VALUE
+                  ? Math.max(width * height * 4, 2 * 1024 * 1024)
+                  : 4 * 1024 * 1024;
           break;
         case CODEC_ID_THEORA:
           // TODO: This can be set to the real mimeType if/when we work out what initializationData
@@ -2774,6 +2798,16 @@ public class MjpegMatroskaExtractor implements Extractor {
           return new Pair<>(MimeTypes.VIDEO_DIVX, null);
         } else if (compression == FOURCC_COMPRESSION_H263) {
           return new Pair<>(MimeTypes.VIDEO_H263, null);
+        } else if (compression == FOURCC_COMPRESSION_MPNG
+            || compression == FOURCC_COMPRESSION_PNG
+            || compression == FOURCC_COMPRESSION_PNG_LOWER
+            || compression == FOURCC_COMPRESSION_MPNG_LOWER) {
+          return new Pair<>("video/mpng", null);
+        } else if (compression == FOURCC_COMPRESSION_MJPG
+            || compression == FOURCC_COMPRESSION_MJPG_LOWER
+            || compression == FOURCC_COMPRESSION_JPEG
+            || compression == FOURCC_COMPRESSION_JPEG_LOWER) {
+          return new Pair<>(MimeTypes.VIDEO_MJPEG, null);
         } else if (compression == FOURCC_COMPRESSION_VC1) {
           // Search for the initialization data from the end of the BITMAPINFOHEADER. The last 20
           // bytes of which are: sizeImage(4), xPel/m (4), yPel/m (4), clrUsed(4), clrImportant(4).

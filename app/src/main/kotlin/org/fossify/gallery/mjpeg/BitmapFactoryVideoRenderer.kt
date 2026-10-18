@@ -27,6 +27,12 @@ class BitmapFactoryVideoRenderer(
 
     companion object {
         private const val DECODER_BUFFER_COUNT = 4
+        private val SUPPORTED_MIME_TYPES = setOf(
+            MimeTypes.VIDEO_MJPEG,
+            "video/mpng",
+            "video/png",
+            "video/x-png"
+        )
     }
 
     private val rect = Rect()
@@ -74,7 +80,7 @@ class BitmapFactoryVideoRenderer(
     override fun getName(): String = "BitmapFactoryVideoRenderer"
 
     override fun supportsFormat(format: Format): Int {
-        return if (MimeTypes.VIDEO_MJPEG == format.sampleMimeType) {
+        return if (SUPPORTED_MIME_TYPES.contains(format.sampleMimeType)) {
             RendererCapabilities.create(C.FORMAT_HANDLED)
         } else {
             RendererCapabilities.create(C.FORMAT_UNSUPPORTED_TYPE)
