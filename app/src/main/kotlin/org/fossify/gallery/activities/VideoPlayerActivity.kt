@@ -46,6 +46,8 @@ import androidx.media3.datasource.DataSpec
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.SeekParameters
+import org.fossify.gallery.mjpeg.MjpegExtractorsFactory
+import org.fossify.gallery.mjpeg.MjpegRenderersFactory
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
@@ -377,7 +379,7 @@ open class VideoPlayerActivity : BaseViewerActivity(), SeekBar.OnSeekBarChangeLi
         }
 
         val factory = DataSource.Factory { fileDataSource }
-        val mediaSource: MediaSource = ProgressiveMediaSource.Factory(factory)
+        val mediaSource: MediaSource = ProgressiveMediaSource.Factory(factory, MjpegExtractorsFactory())
             .createMediaSource(MediaItem.fromUri(fileDataSource.uri!!))
 
         val loadControl = DefaultLoadControl.Builder()
@@ -390,8 +392,10 @@ open class VideoPlayerActivity : BaseViewerActivity(), SeekBar.OnSeekBarChangeLi
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
 
-        mExoPlayer = ExoPlayer.Builder(this)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(applicationContext))
+        val renderersFactory = MjpegRenderersFactory(this)
+
+        mExoPlayer = ExoPlayer.Builder(this, renderersFactory)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(applicationContext, MjpegExtractorsFactory()))
             .setSeekParameters(SeekParameters.EXACT)
             .setLoadControl(loadControl)
             .build()

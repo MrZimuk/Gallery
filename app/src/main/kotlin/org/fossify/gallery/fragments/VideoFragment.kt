@@ -44,6 +44,8 @@ import androidx.media3.datasource.FileDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.SeekParameters
+import org.fossify.gallery.mjpeg.MjpegExtractorsFactory
+import org.fossify.gallery.mjpeg.MjpegRenderersFactory
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
@@ -494,7 +496,7 @@ class VideoFragment : ViewPagerFragment(), TextureView.SurfaceTextureListener,
         }
 
         val factory = DataSource.Factory { fileDataSource }
-        val mediaSource: MediaSource = ProgressiveMediaSource.Factory(factory)
+        val mediaSource: MediaSource = ProgressiveMediaSource.Factory(factory, MjpegExtractorsFactory())
             .createMediaSource(MediaItem.fromUri(fileDataSource.uri!!))
 
         fileDataSource.close()
@@ -511,8 +513,10 @@ class VideoFragment : ViewPagerFragment(), TextureView.SurfaceTextureListener,
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
 
-        mExoPlayer = ExoPlayer.Builder(requireContext())
-            .setMediaSourceFactory(DefaultMediaSourceFactory(requireContext()))
+        val renderersFactory = MjpegRenderersFactory(requireContext())
+
+        mExoPlayer = ExoPlayer.Builder(requireContext(), renderersFactory)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(requireContext(), MjpegExtractorsFactory()))
             .setSeekParameters(SeekParameters.EXACT)
             .setLoadControl(loadControl)
             .build()
