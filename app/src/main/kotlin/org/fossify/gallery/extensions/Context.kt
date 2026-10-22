@@ -90,6 +90,7 @@ import org.fossify.gallery.helpers.LOCATION_INTERNAL
 import org.fossify.gallery.helpers.LOCATION_OTG
 import org.fossify.gallery.helpers.LOCATION_SD
 import org.fossify.gallery.helpers.MediaFetcher
+import org.fossify.gallery.helpers.Mp4Recoverer
 import org.fossify.gallery.helpers.MyWidgetProvider
 import org.fossify.gallery.helpers.PicassoRoundedCornersTransformation
 import org.fossify.gallery.helpers.RECYCLE_BIN
@@ -1096,6 +1097,13 @@ fun Context.getUpdatedDeletedMedia(): ArrayList<Medium> {
 
     media.forEach {
         it.path = File(recycleBinPath, it.path.removePrefix(RECYCLE_BIN)).toString()
+        val fileLastModified = File(it.path).lastModified()
+        if (fileLastModified != 0L && (it.modified == 0L || fileLastModified < it.modified)) {
+            it.modified = fileLastModified
+            if (it.taken == 0L || it.taken > fileLastModified) {
+                it.taken = fileLastModified
+            }
+        }
     }
     return media
 }
@@ -1192,32 +1200,57 @@ fun Context.parseFileChannel(
     }
 }
 
+private fun getPathMediaType(path: String) = when {
+    path.isVideoFast() -> TYPE_VIDEOS
+    path.isGif() -> TYPE_GIFS
+    path.isRawFast() -> TYPE_RAWS
+    path.isSvg() -> TYPE_SVGS
+    path.isPortrait() -> TYPE_PORTRAITS
+    else -> TYPE_IMAGES
+}
+
+private fun Context.getPathTimestamps(path: String, file: File, existing: Medium?): Pair<Long, Long> {
+    val fileLastModified = file.lastModified()
+    val lastModified = if (fileLastModified != 0L) {
+        fileLastModified
+    } else {
+        existing?.modified?.takeIf { it != 0L } ?: System.currentTimeMillis()
+    }
+
+    val dateTaken = getFileDateTaken(path).takeIf { it != 0L }
+        ?: existing?.taken?.takeIf { it != 0L }
+        ?: lastModified
+
+    return Pair(lastModified, dateTaken)
+}
+
 fun Context.addPathToDB(path: String) {
     ensureBackgroundThread {
         if (!getDoesFilePathExist(path)) {
             return@ensureBackgroundThread
         }
 
-        val type = when {
-            path.isVideoFast() -> TYPE_VIDEOS
-            path.isGif() -> TYPE_GIFS
-            path.isRawFast() -> TYPE_RAWS
-            path.isSvg() -> TYPE_SVGS
-            path.isPortrait() -> TYPE_PORTRAITS
-            else -> TYPE_IMAGES
-        }
-
+        val type = getPathMediaType(path)
         try {
+            val file = File(path)
+            val existing = mediaDB.getMedium(path)
+            val (lastModified, dateTaken) = getPathTimestamps(path, file, existing)
             val isFavorite = favoritesDB.isFavorite(path)
-            val videoDuration = if (type == TYPE_VIDEOS) getDuration(path) ?: 0 else 0
+            val rawDuration = if (type == TYPE_VIDEOS) getDuration(path) ?: 0 else 0
+            val videoDuration = if (rawDuration <= 0 && type == TYPE_VIDEOS) {
+                Mp4Recoverer.getVideoDuration(path) ?: 0
+            } else {
+                rawDuration
+            }
+
             val medium = Medium(
-                id = null,
+                id = existing?.id,
                 name = path.getFilenameFromPath(),
                 path = path,
                 parentPath = path.getParentPath(),
-                modified = System.currentTimeMillis(),
-                taken = System.currentTimeMillis(),
-                size = File(path).length(),
+                modified = lastModified,
+                taken = dateTaken,
+                size = file.length(),
                 type = type,
                 videoDuration = videoDuration,
                 isFavorite = isFavorite,

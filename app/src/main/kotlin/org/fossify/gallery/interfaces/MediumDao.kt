@@ -38,8 +38,21 @@ interface MediumDao {
     @Query("UPDATE OR REPLACE media SET filename = :newFilename, full_path = :newFullPath, parent_path = :newParentPath WHERE full_path = :oldPath COLLATE NOCASE")
     fun updateMedium(oldPath: String, newParentPath: String, newFilename: String, newFullPath: String)
 
+    @Query(
+        "SELECT filename, full_path, parent_path, last_modified, date_taken, size, type, video_duration, " +
+            "is_favorite, deleted_ts, media_store_id FROM media WHERE full_path = :path COLLATE NOCASE LIMIT 1"
+    )
+    fun getMedium(path: String): Medium?
+
     @Query("UPDATE OR REPLACE media SET full_path = :newPath, deleted_ts = :deletedTS WHERE full_path = :oldPath COLLATE NOCASE")
     fun updateDeleted(newPath: String, deletedTS: Long, oldPath: String)
+
+    @Query(
+        "UPDATE OR REPLACE media SET full_path = :newPath, deleted_ts = :deletedTS, " +
+            "last_modified = CASE WHEN :lastModified != 0 THEN :lastModified ELSE last_modified END " +
+            "WHERE full_path = :oldPath COLLATE NOCASE"
+    )
+    fun updateDeletedWithLastModified(newPath: String, deletedTS: Long, oldPath: String, lastModified: Long)
 
     @Query("UPDATE media SET date_taken = :dateTaken WHERE full_path = :path COLLATE NOCASE")
     fun updateFavoriteDateTaken(path: String, dateTaken: Long)
