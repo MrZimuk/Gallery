@@ -266,10 +266,8 @@ class MediaFetcher(val context: Context) {
         return MediaStoreFolderSummary(folderCounts, folderCanonicalPaths)
     }
 
-
-
-
     fun getFoldersToScan(knownFolders: Collection<String>? = null): ArrayList<String> {
+
         return try {
             val summary = getMediaStoreFolderSummary()
             val folders = LinkedHashSet<String>()
