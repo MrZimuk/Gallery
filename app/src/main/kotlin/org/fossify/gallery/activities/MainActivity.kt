@@ -1451,7 +1451,7 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
         )
 
         val summary = mLastMediaFetcher!!.getMediaStoreFolderSummary()
-        var anyDirectoryChanged = false
+        var adapterNeedsUpdate = false
 
         for (directory in dirs) {
             if (mShouldStopFetching || isDestroyed || isFinishing) {
@@ -1466,12 +1466,8 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
             }
             val changed = rescanDirectory(directory, scanConfig, dirPathsToRemove)
             if (changed) {
-                anyDirectoryChanged = true
+                adapterNeedsUpdate = true
             }
-        }
-
-        if (anyDirectoryChanged) {
-            setupAdapter(dirs)
         }
 
         if (dirPathsToRemove.isNotEmpty()) {
@@ -1480,7 +1476,7 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
                 directoryDB.deleteDirPath(it.path)
             }
             dirs.removeAll(dirsToRemove)
-            setupAdapter(dirs)
+            adapterNeedsUpdate = true
         }
 
         val knownFolderPaths = dirs.mapTo(HashSet()) { it.path.getDistinctPath() }
@@ -1496,7 +1492,6 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
             folderNoMediaStatuses["$folder/$NOMEDIA"] = true
         }
 
-        var addedNewDirs = false
         for (normPath in newFolderNormPaths) {
             if (mShouldStopFetching || isDestroyed || isFinishing) {
                 return
@@ -1525,13 +1520,13 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
 
                     val added = scanAndAddNewFolder(folderPath, dirs, scanConfig)
                     if (added) {
-                        addedNewDirs = true
+                        adapterNeedsUpdate = true
                     }
                 }
             }
         }
 
-        if (addedNewDirs) {
+        if (adapterNeedsUpdate) {
             setupAdapter(dirs)
         }
 
@@ -1718,7 +1713,7 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
         dirs.filter { !it.areFavorites() && !it.isRecycleBin() }.forEach {
             if (!getDoesFilePathExist(it.path, OTGPath)) {
                 invalidDirs.add(it)
-            } else if (it.path != config.tempFolderPath && (!isRPlus() || isExternalStorageManager())) {
+            } else if (it.path != config.tempFolderPath && !isRPlus()) {
                 // avoid calling file.list() or listfiles() on Android 11+, it became way too slow
                 val children = if (isPathOnOTG(it.path)) {
                     getOTGFolderChildrenNames(it.path)
@@ -1831,31 +1826,22 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
         ensureBackgroundThread {
             try {
                 val internalPath = internalStoragePath
-                val checkedPaths = ArrayList<String>()
-                val oftenRepeatedPaths = ArrayList<String>()
-                val paths = mDirs
-                    .map { it.path.removePrefix(internalPath) }
-                    .toMutableList() as ArrayList<String>
-                paths.forEach {
-                    val parts = it.split("/")
+                val paths = mDirs.map { it.path.removePrefix(internalPath) }
+                val prefixCounts = HashMap<String, Int>()
+
+                for (p in paths) {
+                    if (!p.startsWith("/Android/data", true)) continue
+                    val parts = p.split("/").filter { it.isNotEmpty() }
                     var currentString = ""
-                    for (i in 0 until parts.size) {
-                        currentString += "${parts[i]}/"
-
-                        if (!checkedPaths.contains(currentString)) {
-                            val cnt = paths.count { it.startsWith(currentString) }
-                            if (cnt > 50 && currentString.startsWith("/Android/data", true)) {
-                                oftenRepeatedPaths.add(currentString)
-                            }
-                        }
-
-                        checkedPaths.add(currentString)
+                    for (part in parts) {
+                        currentString += "/$part"
+                        prefixCounts[currentString] = (prefixCounts[currentString] ?: 0) + 1
                     }
                 }
 
-                val substringToRemove = oftenRepeatedPaths.filter {
-                    val path = it
-                    it == "/" || oftenRepeatedPaths.any { it != path && it.startsWith(path) }
+                val oftenRepeatedPaths = prefixCounts.filter { it.value > 50 }.keys.toMutableList()
+                val substringToRemove = oftenRepeatedPaths.filter { path ->
+                    path == "/" || oftenRepeatedPaths.any { it != path && it.startsWith(path) }
                 }
 
                 oftenRepeatedPaths.removeAll(substringToRemove)
@@ -1866,7 +1852,7 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
                         config.addExcludedFolder(file.absolutePath)
                     }
                 }
-            } catch (e: Exception) {
+            } catch (ignored: Exception) {
             }
         }
     }

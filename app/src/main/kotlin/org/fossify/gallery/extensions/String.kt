@@ -40,10 +40,15 @@ fun String.shouldFolderBeVisible(
         return true
     }
 
+    val pathToCheck = "$this/$NOMEDIA"
     val containsNoMedia = if (showHidden) {
         false
+    } else if (folderNoMediaStatuses.containsKey(pathToCheck)) {
+        folderNoMediaStatuses[pathToCheck] == true
     } else {
-        folderNoMediaStatuses.getOrElse("$this/$NOMEDIA") { false } || ((!isRPlus() || isExternalStorageManager()) && File(this, NOMEDIA).exists())
+        val exists = (!isRPlus() || isExternalStorageManager()) && File(this, NOMEDIA).exists()
+        callback(pathToCheck, exists)
+        exists
     }
 
     return if (!showHidden && containsNoMedia) {
@@ -60,15 +65,15 @@ fun String.shouldFolderBeVisible(
             var curPath = this
             for (i in 0 until count { it == '/' } - 1) {
                 curPath = curPath.substringBeforeLast('/')
-                val pathToCheck = "$curPath/$NOMEDIA"
-                if (folderNoMediaStatuses.contains(pathToCheck)) {
-                    if (folderNoMediaStatuses[pathToCheck] == true) {
+                val parentPathToCheck = "$curPath/$NOMEDIA"
+                if (folderNoMediaStatuses.containsKey(parentPathToCheck)) {
+                    if (folderNoMediaStatuses[parentPathToCheck] == true) {
                         containsNoMediaOrDot = true
                         break
                     }
                 } else {
-                    val noMediaExists = folderNoMediaStatuses.getOrElse(pathToCheck, { false }) || File(pathToCheck).exists()
-                    callback(pathToCheck, noMediaExists)
+                    val noMediaExists = File(parentPathToCheck).exists()
+                    callback(parentPathToCheck, noMediaExists)
                     if (noMediaExists) {
                         containsNoMediaOrDot = true
                         break
