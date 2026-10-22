@@ -11,12 +11,14 @@ import com.bumptech.glide.load.resource.bitmap.BitmapResource
 import java.io.InputStream
 import java.nio.ByteBuffer
 
+import org.fossify.gallery.helpers.Mp4Recoverer
+
 class MjpegParcelFileDescriptorDecoder(
     private val bitmapPool: BitmapPool
 ) : ResourceDecoder<ParcelFileDescriptor, Bitmap> {
 
     override fun handles(source: ParcelFileDescriptor, options: Options): Boolean {
-        return MjpegThumbnailExtractor.isMjpeg(source)
+        return MjpegThumbnailExtractor.isMjpeg(source) || Mp4Recoverer.isMalformedMp4(source)
     }
 
     override fun decode(
@@ -25,7 +27,11 @@ class MjpegParcelFileDescriptorDecoder(
         height: Int,
         options: Options
     ): Resource<Bitmap>? {
-        val bitmap = MjpegThumbnailExtractor.extractBitmap(source, width, height) ?: return null
+        val bitmap = if (MjpegThumbnailExtractor.isMjpeg(source)) {
+            MjpegThumbnailExtractor.extractBitmap(source, width, height)
+        } else {
+            Mp4Recoverer.extractBitmap(source, width, height)
+        } ?: return null
         return BitmapResource.obtain(bitmap, bitmapPool)
     }
 }
@@ -35,7 +41,7 @@ class MjpegAssetFileDescriptorDecoder(
 ) : ResourceDecoder<AssetFileDescriptor, Bitmap> {
 
     override fun handles(source: AssetFileDescriptor, options: Options): Boolean {
-        return MjpegThumbnailExtractor.isMjpeg(source)
+        return MjpegThumbnailExtractor.isMjpeg(source) || Mp4Recoverer.isMalformedMp4(source)
     }
 
     override fun decode(
@@ -44,7 +50,11 @@ class MjpegAssetFileDescriptorDecoder(
         height: Int,
         options: Options
     ): Resource<Bitmap>? {
-        val bitmap = MjpegThumbnailExtractor.extractBitmap(source, width, height) ?: return null
+        val bitmap = if (MjpegThumbnailExtractor.isMjpeg(source)) {
+            MjpegThumbnailExtractor.extractBitmap(source, width, height)
+        } else {
+            Mp4Recoverer.extractBitmap(source, width, height)
+        } ?: return null
         return BitmapResource.obtain(bitmap, bitmapPool)
     }
 }

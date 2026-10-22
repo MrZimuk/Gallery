@@ -116,6 +116,7 @@ abstract class ViewPagerFragment : Fragment() {
         } else {
             val res = context?.getResolution(file.absolutePath)
                 ?: MjpegThumbnailExtractor.getVideoResolution(file.absolutePath)
+                ?: Mp4Recoverer.getVideoResolution(file.absolutePath)
             return res?.formatAsResolution()
         }
     }

@@ -50,6 +50,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import com.bumptech.glide.Glide
+import org.fossify.gallery.helpers.Mp4Recoverer
 import org.fossify.gallery.mjpeg.MjpegThumbnailExtractor
 import org.fossify.commons.extensions.beGone
 import org.fossify.commons.extensions.beGoneIf
@@ -295,12 +296,15 @@ class VideoFragment : ViewPagerFragment(), TextureView.SurfaceTextureListener,
         // checkIfPanorama() TODO: Implement panorama using a FOSS library
 
         val quickResolution = MjpegThumbnailExtractor.getVideoResolution(mMedium.path)
+            ?: Mp4Recoverer.getVideoResolution(mMedium.path)
         if (quickResolution != null) {
             mVideoSize.x = quickResolution.x
             mVideoSize.y = quickResolution.y
         } else {
             ensureBackgroundThread {
-                activity.getVideoResolution(mMedium.path)?.apply {
+                val res = activity.getVideoResolution(mMedium.path)
+                    ?: Mp4Recoverer.getVideoResolution(mMedium.path)
+                res?.apply {
                     mVideoSize.x = x
                     mVideoSize.y = y
                     activity.runOnUiThread {
@@ -576,9 +580,12 @@ class VideoFragment : ViewPagerFragment(), TextureView.SurfaceTextureListener,
             }
 
             override fun onVideoSizeChanged(videoSize: VideoSize) {
-                mVideoSize.x = videoSize.width
-                mVideoSize.y = (videoSize.height / videoSize.pixelWidthHeightRatio).toInt()
-                setVideoSize()
+                if (videoSize.width > 0 && videoSize.height > 0) {
+                    mVideoSize.x = videoSize.width
+                    val ratio = if (videoSize.pixelWidthHeightRatio > 0f) videoSize.pixelWidthHeightRatio else 1.0f
+                    mVideoSize.y = (videoSize.height / ratio).toInt()
+                    setVideoSize()
+                }
             }
 
             override fun onPlayerErrorChanged(error: PlaybackException?) {
@@ -887,7 +894,8 @@ class VideoFragment : ViewPagerFragment(), TextureView.SurfaceTextureListener,
 
     private fun setupVideoDuration() {
         ensureBackgroundThread {
-            mDuration = context?.getDuration(mMedium.path)?.times(1000L)?.coerceAtLeast(0L) ?: 0L
+            val dur = context?.getDuration(mMedium.path) ?: Mp4Recoverer.getVideoDuration(mMedium.path)
+            mDuration = dur?.times(1000L)?.coerceAtLeast(0L) ?: 0L
 
             activity?.runOnUiThread {
                 setupTimeHolder()
@@ -972,9 +980,8 @@ class VideoFragment : ViewPagerFragment(), TextureView.SurfaceTextureListener,
 
     private fun setVideoSize() {
         val hasValidDimensions = mVideoSize.x > 1 && mVideoSize.y > 1
-        if (activity == null || mConfig.gestureVideoPlayer || !hasValidDimensions) return
+        if (activity == null || mConfig.gestureVideoPlayer) return
 
-        val videoProportion = mVideoSize.x.toFloat() / mVideoSize.y.toFloat()
         val display = requireActivity().windowManager.defaultDisplay
         val screenWidth: Int
         val screenHeight: Int
@@ -984,6 +991,16 @@ class VideoFragment : ViewPagerFragment(), TextureView.SurfaceTextureListener,
         screenWidth = realMetrics.widthPixels
         screenHeight = realMetrics.heightPixels
 
+        if (!hasValidDimensions) {
+            mTextureView.layoutParams.apply {
+                width = screenWidth
+                height = screenWidth
+                mTextureView.layoutParams = this
+            }
+            return
+        }
+
+        val videoProportion = mVideoSize.x.toFloat() / mVideoSize.y.toFloat()
         val screenProportion = screenWidth.toFloat() / screenHeight.toFloat()
 
         mTextureView.layoutParams.apply {

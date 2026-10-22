@@ -28,6 +28,7 @@ import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
 import android.widget.Toast
 import androidx.core.graphics.drawable.toDrawable
+import org.fossify.gallery.helpers.Mp4Recoverer
 import org.fossify.gallery.mjpeg.MjpegThumbnailExtractor
 import androidx.exifinterface.media.ExifInterface
 import androidx.print.PrintHelper
@@ -1409,6 +1410,7 @@ class ViewPagerActivity : BaseViewerActivity(), ViewPager.OnPageChangeListener, 
             }
             val resolution = applicationContext.getResolution(getCurrentPath())
                 ?: MjpegThumbnailExtractor.getVideoResolution(getCurrentPath())
+                ?: Mp4Recoverer.getVideoResolution(getCurrentPath())
                 ?: return
             val width = if (flipSides) resolution.y else resolution.x
             val height = if (flipSides) resolution.x else resolution.y
