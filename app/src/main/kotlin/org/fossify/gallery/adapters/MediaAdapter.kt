@@ -15,7 +15,7 @@ import com.bumptech.glide.Glide
 import com.qtalk.recyclerviewfastscroller.RecyclerViewFastScroller
 import org.fossify.commons.activities.BaseSimpleActivity
 import org.fossify.commons.adapters.MyRecyclerViewAdapter
-import org.fossify.commons.dialogs.PropertiesDialog
+import org.fossify.gallery.dialogs.PropertiesDialog
 import org.fossify.commons.dialogs.RenameDialog
 import org.fossify.commons.dialogs.RenameItemDialog
 import org.fossify.commons.extensions.applyColorFilter

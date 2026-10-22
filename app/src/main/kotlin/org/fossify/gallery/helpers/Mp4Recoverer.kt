@@ -1,3 +1,5 @@
+@file:Suppress("MagicNumber", "ComplexCondition", "CyclomaticComplexMethod", "MaxLineLength", "TooGenericExceptionCaught")
+
 package org.fossify.gallery.helpers
 
 import android.content.res.AssetFileDescriptor

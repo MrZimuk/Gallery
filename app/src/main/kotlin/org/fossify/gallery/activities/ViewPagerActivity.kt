@@ -41,7 +41,7 @@ import com.bumptech.glide.request.RequestListener
 import com.bumptech.glide.request.RequestOptions
 import com.bumptech.glide.request.target.Target
 import com.google.android.material.appbar.AppBarLayout
-import org.fossify.commons.dialogs.PropertiesDialog
+import org.fossify.gallery.dialogs.PropertiesDialog
 import org.fossify.commons.dialogs.RenameItemDialog
 import org.fossify.commons.extensions.applyColorFilter
 import org.fossify.commons.extensions.beGone
