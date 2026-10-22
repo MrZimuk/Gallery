@@ -84,14 +84,24 @@ fun String.shouldFolderBeVisible(
 
 // recognize /sdcard/DCIM as the same folder as /storage/emulated/0/DCIM
 fun String.getDistinctPath(): String {
+    val normalized = when {
+        startsWith("/sdcard/") -> "/storage/emulated/0/${removePrefix("/sdcard/")}"
+        this == "/sdcard" -> "/storage/emulated/0"
+        else -> this
+    }
+    val cleaned = if (normalized.length > 1 && normalized.endsWith('/')) {
+        normalized.trimEnd('/')
+    } else {
+        normalized
+    }
     return try {
-        if (startsWith("/storage/emulated/") || startsWith("/storage/")) {
-            lowercase(Locale.getDefault())
+        if (cleaned.startsWith("/storage/emulated/") || cleaned.startsWith("/storage/")) {
+            cleaned.lowercase(Locale.getDefault())
         } else {
-            File(this).canonicalPath.lowercase(Locale.getDefault())
+            File(cleaned).canonicalPath.lowercase(Locale.getDefault())
         }
     } catch (e: IOException) {
-        lowercase(Locale.getDefault())
+        cleaned.lowercase(Locale.getDefault())
     }
 }
 

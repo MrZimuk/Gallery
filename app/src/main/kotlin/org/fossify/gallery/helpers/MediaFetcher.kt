@@ -22,6 +22,11 @@ import java.io.File
 import java.util.Calendar
 import java.util.Locale
 
+data class MediaStoreFolderSummary(
+    val folderCounts: HashMap<String, Int>,
+    val folderCanonicalPaths: HashMap<String, String>
+)
+
 class MediaFetcher(val context: Context) {
     var shouldStop = false
 
@@ -55,21 +60,9 @@ class MediaFetcher(val context: Context) {
             }
 
             if (curMedia.isEmpty()) {
-                val folderLastModifieds = if (lastModifieds.isEmpty() && getProperLastModified) {
-                    getFolderLastModifieds(curPath)
-                } else {
-                    lastModifieds
-                }
-
-                val folderDateTakens = if (dateTakens.isEmpty() && getProperDateTaken) {
-                    getFolderDateTakens(curPath)
-                } else {
-                    dateTakens
-                }
-
                 val newMedia = getMediaInFolder(
                     curPath, isPickImage, isPickVideo, filterMedia, getProperDateTaken, getProperLastModified, getProperFileSize,
-                    favoritePaths, getVideoDurations, folderLastModifieds, folderDateTakens
+                    favoritePaths, getVideoDurations, lastModifieds, dateTakens
                 )
 
                 if (curPath == FAVORITES && isRPlus() && !isExternalStorageManager()) {
@@ -79,7 +72,7 @@ class MediaFetcher(val context: Context) {
                         favoritePaths = favoritePaths,
                         getFavoritePathsOnly = true,
                         getProperDateTaken = getProperDateTaken,
-                        dateTakens = folderDateTakens
+                        dateTakens = dateTakens
                     )
                     newMedia.forEach { newMedium ->
                         for ((folder, media) in files) {
@@ -99,26 +92,78 @@ class MediaFetcher(val context: Context) {
         return curMedia
     }
 
+    private fun parseMediaStoreSummaryCursor(
+        cursor: Cursor,
+        folderCounts: HashMap<String, Int>,
+        folderCanonicalPaths: HashMap<String, String>
+    ) {
+        val dataIndex = cursor.getColumnIndex(Images.Media.DATA)
+        if (dataIndex == -1 || !cursor.moveToFirst()) return
+        do {
+            val path = cursor.getString(dataIndex) ?: continue
+            val lastSlash = path.lastIndexOf('/')
+            if (lastSlash > 0) {
+                val parent = path.substring(0, lastSlash)
+                val normParent = parent.getDistinctPath()
+                folderCounts[normParent] = (folderCounts[normParent] ?: 0) + 1
+                if (!folderCanonicalPaths.containsKey(normParent)) {
+                    folderCanonicalPaths[normParent] = parent
+                }
+            }
+        } while (cursor.moveToNext())
+    }
+
+    private fun checkSpecialFoldersForMedia(
+        folderCounts: HashMap<String, Int>,
+        folderCanonicalPaths: HashMap<String, String>
+    ) {
+        val specialFolders = ArrayList<String>(context.config.includedFolders)
+        specialFolders.add(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM).toString())
+        specialFolders.add("${Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM)}/Camera")
+        specialFolders.add(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES).toString())
+        specialFolders.add(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).toString())
+        specialFolders.add(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES).toString())
+
+        for (path in specialFolders) {
+            val norm = path.getDistinctPath()
+            if (folderCounts.containsKey(norm)) continue
+            val dir = File(path)
+            if (!dir.isDirectory) continue
+            val hasMedia = dir.listFiles()?.any { it.isFile && it.isMediaFile() } == true
+            if (hasMedia) {
+                folderCounts[norm] = -1
+                folderCanonicalPaths[norm] = path
+            }
+        }
+    }
+
+    fun getMediaStoreFolderSummary(): MediaStoreFolderSummary {
+        val folderCounts = HashMap<String, Int>()
+        val folderCanonicalPaths = HashMap<String, String>()
+        val filterMedia = context.config.filterMedia
+        val uri = Files.getContentUri("external")
+        val projection = arrayOf(Images.Media.DATA)
+        val selection = getSelectionQuery(filterMedia).ifEmpty { null }
+
+        try {
+            val cursor = context.contentResolver.query(uri, projection, selection, null, null)
+            cursor?.use { parseMediaStoreSummaryCursor(it, folderCounts, folderCanonicalPaths) }
+        } catch (ignored: Exception) {
+        }
+
+        try {
+            checkSpecialFoldersForMedia(folderCounts, folderCanonicalPaths)
+        } catch (ignored: Exception) {
+        }
+
+        return MediaStoreFolderSummary(folderCounts, folderCanonicalPaths)
+    }
+
     fun getFoldersToScan(knownFolders: Collection<String>? = null): ArrayList<String> {
         return try {
-            val OTGPath = context.config.OTGPath
-            val folders = getLatestFileFolders()
-            folders.addAll(arrayListOf(
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM).toString(),
-                "${Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM)}/Camera",
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES).toString(),
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).toString(),
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES).toString()
-            ).filter { context.getDoesFilePathExist(it, OTGPath) })
-
-            val filterMedia = context.config.filterMedia
-            val uri = Files.getContentUri("external")
-            val projection = arrayOf(Images.Media.DATA)
-            val selection = getSelectionQuery(filterMedia).ifEmpty { null }
-            val cursor = context.contentResolver.query(uri, projection, selection, null, null)
-            if (cursor != null) {
-                folders.addAll(parseCursor(cursor))
-            }
+            val summary = getMediaStoreFolderSummary()
+            val folders = LinkedHashSet<String>()
+            folders.addAll(summary.folderCanonicalPaths.values)
 
             val config = context.config
             val shouldShowHidden = config.shouldShowHidden
@@ -127,35 +172,20 @@ class MediaFetcher(val context: Context) {
             } else {
                 config.excludedFolders
             }
-
             val includedPaths = config.includedFolders
 
-            // If caller provided knownFolders (e.g. MainActivity already caching dirs),
-            // remove them early so we don't do expensive checks on thousands of already-known folders
             if (knownFolders != null && knownFolders.isNotEmpty()) {
-                val knownSet = if (knownFolders is Set) knownFolders else knownFolders.toHashSet()
-                folders.removeAll(knownSet)
+                val knownSet = knownFolders.mapTo(HashSet()) { it.getDistinctPath() }
+                folders.removeAll { knownSet.contains(it.getDistinctPath()) }
             }
 
             val folderNoMediaStatuses = HashMap<String, Boolean>()
-            val distinctPathsMap = HashMap<String, String>()
-            val distinctPaths = folders.distinctBy {
-                when {
-                    distinctPathsMap.containsKey(it) -> distinctPathsMap[it]
-                    else -> {
-                        val distinct = it.getDistinctPath()
-                        distinctPathsMap[it.getParentPath()] = distinct.getParentPath()
-                        distinct
-                    }
-                }
-            }
-
             val noMediaFolders = context.getNoMediaFoldersSync()
             noMediaFolders.forEach { folder ->
                 folderNoMediaStatuses["$folder/$NOMEDIA"] = true
             }
 
-            distinctPaths.filter {
+            folders.filter {
                 it.shouldFolderBeVisible(excludedPaths, includedPaths, shouldShowHidden, folderNoMediaStatuses) { path, hasNoMedia ->
                     folderNoMediaStatuses[path] = hasNoMedia
                 }
@@ -165,44 +195,6 @@ class MediaFetcher(val context: Context) {
         }
     }
 
-    private fun getLatestFileFolders(): LinkedHashSet<String> {
-        val uri = Files.getContentUri("external")
-        val projection = arrayOf(Images.ImageColumns.DATA)
-        val parents = LinkedHashSet<String>()
-        var cursor: Cursor? = null
-        try {
-            if (isRPlus()) {
-                val bundle = Bundle().apply {
-                    putInt(ContentResolver.QUERY_ARG_LIMIT, 10)
-                    putStringArray(ContentResolver.QUERY_ARG_SORT_COLUMNS, arrayOf(BaseColumns._ID))
-                    putInt(ContentResolver.QUERY_ARG_SORT_DIRECTION, ContentResolver.QUERY_SORT_DIRECTION_DESCENDING)
-                }
-
-                cursor = context.contentResolver.query(uri, projection, bundle, null)
-                if (cursor?.moveToFirst() == true) {
-                    do {
-                        val path = cursor.getStringValue(Images.ImageColumns.DATA) ?: continue
-                        parents.add(path.getParentPath())
-                    } while (cursor.moveToNext())
-                }
-            } else {
-                val sorting = "${BaseColumns._ID} DESC LIMIT 10"
-                cursor = context.contentResolver.query(uri, projection, null, null, sorting)
-                if (cursor?.moveToFirst() == true) {
-                    do {
-                        val path = cursor.getStringValue(Images.ImageColumns.DATA) ?: continue
-                        parents.add(path.getParentPath())
-                    } while (cursor.moveToNext())
-                }
-            }
-        } catch (e: Exception) {
-            context.showErrorToast(e)
-        } finally {
-            cursor?.close()
-        }
-
-        return parents
-    }
 
     private fun getSelectionQuery(filterMedia: Int): String {
         val query = StringBuilder()
@@ -231,49 +223,7 @@ class MediaFetcher(val context: Context) {
         return query.toString()
     }
 
-    private fun parseCursor(cursor: Cursor): LinkedHashSet<String> {
-        val foldersToIgnore = arrayListOf("/storage/emulated/legacy")
-        val config = context.config
-        val includedFolders = config.includedFolders
-        val OTGPath = config.OTGPath
-        val foldersToScan = config.everShownFolders.filter {
-            it == FAVORITES || it == RECYCLE_BIN || context.getDoesFilePathExist(it, OTGPath)
-        }.toHashSet()
 
-        val dataIndex = cursor.getColumnIndex(Images.Media.DATA)
-        cursor.use {
-            if (dataIndex != -1 && cursor.moveToFirst()) {
-                do {
-                    val path = cursor.getString(dataIndex)
-                    if (path != null) {
-                        val lastSlash = path.lastIndexOf('/')
-                        if (lastSlash > 0) {
-                            val parentPath = path.substring(0, lastSlash)
-                            if (!includedFolders.contains(parentPath) && !foldersToIgnore.contains(parentPath)) {
-                                foldersToScan.add(parentPath)
-                            }
-                        }
-                    }
-                } while (cursor.moveToNext())
-            }
-        }
-
-        includedFolders.forEach {
-            addFolder(foldersToScan, it)
-        }
-
-        return foldersToScan.toMutableSet() as LinkedHashSet<String>
-    }
-
-    private fun addFolder(curFolders: HashSet<String>, folder: String) {
-        curFolders.add(folder)
-        val files = File(folder).listFiles() ?: return
-        for (file in files) {
-            if (file.isDirectory) {
-                addFolder(curFolders, file.absolutePath)
-            }
-        }
-    }
 
     private fun getMediaInFolder(
         folder: String, isPickImage: Boolean, isPickVideo: Boolean, filterMedia: Int, getProperDateTaken: Boolean,
