@@ -21,8 +21,11 @@ import org.fossify.gallery.models.ThumbnailSection
 import java.io.File
 import java.util.Calendar
 import java.util.Locale
+private const val PARENT_CACHE_INITIAL_CAPACITY = 1024
+private const val TIMESTAMP_SAFETY_MARGIN_SECONDS = 60L
 
 data class MediaStoreFolderSummary(
+
     val folderCounts: HashMap<String, Int>,
     val folderCanonicalPaths: HashMap<String, String>
 )
@@ -92,25 +95,63 @@ class MediaFetcher(val context: Context) {
         return curMedia
     }
 
+    private fun resolveNormParent(
+        parent: String,
+        parentToNormParent: HashMap<String, String>,
+        folderCanonicalPaths: HashMap<String, String>
+    ): String {
+        return parentToNormParent.getOrPut(parent) {
+            val norm = parent.getDistinctPath()
+            if (!folderCanonicalPaths.containsKey(norm)) {
+                folderCanonicalPaths[norm] = parent
+            }
+            norm
+        }
+    }
+
+    private fun flushParentCount(
+        normParent: String?,
+        count: Int,
+        folderCounts: HashMap<String, Int>
+    ) {
+        if (normParent != null && count > 0) {
+            folderCounts[normParent] = (folderCounts[normParent] ?: 0) + count
+        }
+    }
+
     private fun parseMediaStoreSummaryCursor(
         cursor: Cursor,
         folderCounts: HashMap<String, Int>,
         folderCanonicalPaths: HashMap<String, String>
     ) {
         val dataIndex = cursor.getColumnIndex(Images.Media.DATA)
-        if (dataIndex == -1 || !cursor.moveToFirst()) return
-        do {
-            val path = cursor.getString(dataIndex) ?: continue
-            val lastSlash = path.lastIndexOf('/')
+        if (dataIndex == -1) return
+
+        val parentToNormParent = HashMap<String, String>(PARENT_CACHE_INITIAL_CAPACITY)
+        var lastParent: String? = null
+        var lastNormParent: String? = null
+        var lastCount = 0
+
+        while (!shouldStop && cursor.moveToNext()) {
+            val path = cursor.getString(dataIndex)
+            val lastSlash = path?.lastIndexOf('/') ?: -1
             if (lastSlash > 0) {
-                val parent = path.substring(0, lastSlash)
-                val normParent = parent.getDistinctPath()
-                folderCounts[normParent] = (folderCounts[normParent] ?: 0) + 1
-                if (!folderCanonicalPaths.containsKey(normParent)) {
-                    folderCanonicalPaths[normParent] = parent
+                val isSameParent = lastParent != null && lastSlash == lastParent.length && path!!.startsWith(lastParent)
+                if (isSameParent) {
+                    lastCount++
+                } else {
+                    flushParentCount(lastNormParent, lastCount, folderCounts)
+                    val parent = path!!.substring(0, lastSlash)
+                    lastParent = parent
+                    lastNormParent = resolveNormParent(parent, parentToNormParent, folderCanonicalPaths)
+                    lastCount = 1
                 }
             }
-        } while (cursor.moveToNext())
+        }
+
+        if (!shouldStop) {
+            flushParentCount(lastNormParent, lastCount, folderCounts)
+        }
     }
 
     private fun checkSpecialFoldersForMedia(
@@ -137,6 +178,70 @@ class MediaFetcher(val context: Context) {
         }
     }
 
+    private fun parseRecentChangesCursor(
+        cursor: Cursor,
+        folderPaths: HashSet<String>,
+        initialMaxId: Long
+    ): Long {
+        var maxId = initialMaxId
+        val idIndex = cursor.getColumnIndex(Images.Media._ID)
+        val dataIndex = cursor.getColumnIndex(Images.Media.DATA)
+        while (!shouldStop && cursor.moveToNext()) {
+            if (idIndex != -1) {
+                val rowId = cursor.getLong(idIndex)
+                if (rowId > maxId) {
+                    maxId = rowId
+                }
+            }
+            if (dataIndex != -1) {
+                val path = cursor.getString(dataIndex)
+                val lastSlash = path?.lastIndexOf('/') ?: -1
+                if (lastSlash > 0) {
+                    folderPaths.add(path!!.substring(0, lastSlash))
+                }
+            }
+        }
+        return maxId
+    }
+
+    fun getRecentFolderChanges(sinceId: Long, sinceTimestamp: Long): Pair<Set<String>, Long> {
+        val folderPaths = HashSet<String>()
+        var maxId = sinceId
+        if (sinceId <= 0L) {
+            return Pair(folderPaths, maxId)
+        }
+
+        val uri = Files.getContentUri("external")
+        val projection = arrayOf(Images.Media._ID, Images.Media.DATA, Images.Media.DATE_MODIFIED)
+        val filterSelection = getSelectionQuery(context.config.filterMedia)
+        val effectiveTimestamp = if (sinceTimestamp > TIMESTAMP_SAFETY_MARGIN_SECONDS) {
+            sinceTimestamp - TIMESTAMP_SAFETY_MARGIN_SECONDS
+        } else {
+            0L
+        }
+        val timeCondition = if (effectiveTimestamp > 0L) {
+            " OR ${Images.Media.DATE_MODIFIED} > $effectiveTimestamp"
+        } else {
+            ""
+        }
+        val idCondition = "(${Images.Media._ID} > $sinceId$timeCondition)"
+        val selection = if (filterSelection.isNotEmpty()) {
+            "$idCondition AND ($filterSelection)"
+        } else {
+            idCondition
+        }
+
+        try {
+            val cursor = context.contentResolver.query(uri, projection, selection, null, null)
+            cursor?.use {
+                maxId = parseRecentChangesCursor(it, folderPaths, maxId)
+            }
+        } catch (ignored: Exception) {
+        }
+
+        return Pair(folderPaths, maxId)
+    }
+
     fun getMediaStoreFolderSummary(): MediaStoreFolderSummary {
         val folderCounts = HashMap<String, Int>()
         val folderCanonicalPaths = HashMap<String, String>()
@@ -147,7 +252,9 @@ class MediaFetcher(val context: Context) {
 
         try {
             val cursor = context.contentResolver.query(uri, projection, selection, null, null)
-            cursor?.use { parseMediaStoreSummaryCursor(it, folderCounts, folderCanonicalPaths) }
+            cursor?.use {
+                parseMediaStoreSummaryCursor(it, folderCounts, folderCanonicalPaths)
+            }
         } catch (ignored: Exception) {
         }
 
@@ -158,6 +265,9 @@ class MediaFetcher(val context: Context) {
 
         return MediaStoreFolderSummary(folderCounts, folderCanonicalPaths)
     }
+
+
+
 
     fun getFoldersToScan(knownFolders: Collection<String>? = null): ArrayList<String> {
         return try {

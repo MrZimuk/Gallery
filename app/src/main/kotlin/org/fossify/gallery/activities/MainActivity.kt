@@ -1472,6 +1472,23 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
             android11Files = android11Files
         )
 
+        val fastPathUpdated = checkFastPathFolderChanges(dirs, scanConfig, dirPathsToRemove) {
+            if (isPlaceholderVisible) {
+                isPlaceholderVisible = false
+                runOnUiThread {
+                    binding.directoriesEmptyPlaceholder.beGone()
+                    binding.directoriesEmptyPlaceholder2.beGone()
+                    binding.directoriesFastscroller.beVisible()
+                }
+            }
+        }
+        if (fastPathUpdated) {
+            setupAdapter(dirs)
+            runOnUiThread {
+                binding.directoriesRefreshLayout.isRefreshing = false
+            }
+        }
+
         val summary = mLastMediaFetcher!!.getMediaStoreFolderSummary()
         var adapterNeedsUpdate = false
 
@@ -1553,6 +1570,8 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
         }
 
         mLoadedInitialPhotos = true
+        config.lastScanMaxMediaId = maxOf(config.lastScanMaxMediaId, getLatestMediaId())
+        config.lastScanTimestamp = System.currentTimeMillis() / 1000
         if (config.appRunCount > 1) {
             checkLastMediaChanged()
         }
@@ -1561,6 +1580,7 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
             binding.directoriesRefreshLayout.isRefreshing = false
             checkPlaceholderVisibility(dirs)
         }
+
 
         checkInvalidDirectories(dirs)
         if (mDirs.size > 50) {
@@ -1788,9 +1808,93 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
             if (hasPermission(PERMISSION_READ_STORAGE)) {
                 mLatestMediaId = getLatestMediaId()
                 mLatestMediaDateId = getLatestMediaByDateId()
+                if (config.lastScanMaxMediaId == 0L && mLatestMediaId > 0L) {
+                    config.lastScanMaxMediaId = mLatestMediaId
+                    config.lastScanTimestamp = System.currentTimeMillis() / 1000
+                }
             }
         }
     }
+
+    private fun handleFastPathFolder(
+        folderPath: String,
+        dirs: ArrayList<Directory>,
+        scanConfig: FolderScanConfig,
+        knownFolderPaths: HashSet<String>,
+        dirPathsToRemove: ArrayList<String>,
+        onPlaceholderHidden: () -> Unit
+    ): Boolean {
+        val norm = folderPath.getDistinctPath()
+        val existingDir = dirs.firstOrNull { it.path.getDistinctPath() == norm }
+        if (existingDir != null) {
+            return rescanDirectory(existingDir, scanConfig, dirPathsToRemove)
+        }
+
+        val excludedPaths = if (config.temporarilyShowExcluded) HashSet() else config.excludedFolders
+        val folderNoMediaStatuses = HashMap<String, Boolean>()
+        scanConfig.noMediaFolders.forEach { folder -> folderNoMediaStatuses["$folder/$NOMEDIA"] = true }
+
+        val isVisible = folderPath.shouldFolderBeVisible(
+            excludedPaths = excludedPaths,
+            includedPaths = scanConfig.includedFolders,
+            showHidden = config.shouldShowHidden,
+            folderNoMediaStatuses = folderNoMediaStatuses
+        ) { path, hasNoMedia ->
+            folderNoMediaStatuses[path] = hasNoMedia
+        }
+
+        if (isVisible) {
+            onPlaceholderHidden()
+            val added = scanAndAddNewFolder(folderPath, dirs, scanConfig)
+            if (added) {
+                knownFolderPaths.add(norm)
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun checkFastPathFolderChanges(
+        dirs: ArrayList<Directory>,
+        scanConfig: FolderScanConfig,
+        dirPathsToRemove: ArrayList<String>,
+        onPlaceholderHidden: () -> Unit
+    ): Boolean {
+        val lastScanMaxId = config.lastScanMaxMediaId
+        val lastScanTs = config.lastScanTimestamp
+        if (lastScanMaxId <= 0L) {
+            return false
+        }
+
+        val (fastChangedFolders, fastMaxId) = mLastMediaFetcher?.getRecentFolderChanges(lastScanMaxId, lastScanTs)
+            ?: Pair(emptySet(), lastScanMaxId)
+        if (fastChangedFolders.isEmpty()) {
+            return false
+        }
+
+        val knownFolderPaths = dirs.mapTo(HashSet()) { it.path.getDistinctPath() }
+        var fastPathUpdated = false
+
+        for (folderPath in fastChangedFolders) {
+            if (
+                handleFastPathFolder(
+                    folderPath,
+                    dirs,
+                    scanConfig,
+                    knownFolderPaths,
+                    dirPathsToRemove,
+                    onPlaceholderHidden
+                )
+            ) {
+                fastPathUpdated = true
+            }
+        }
+
+        config.lastScanMaxMediaId = maxOf(config.lastScanMaxMediaId, fastMaxId)
+        config.lastScanTimestamp = System.currentTimeMillis() / 1000
+        return fastPathUpdated
+    }
+
 
     private fun checkLastMediaChanged() {
         if (isDestroyed) {

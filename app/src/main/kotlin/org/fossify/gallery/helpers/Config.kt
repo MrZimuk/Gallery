@@ -139,6 +139,15 @@ class Config(context: Context) : BaseConfig(context) {
         get() = prefs.getInt(EXCLUDED_PROTECTION_TYPE, PROTECTION_PATTERN)
         set(excludedProtectionType) = prefs.edit().putInt(EXCLUDED_PROTECTION_TYPE, excludedProtectionType).apply()
 
+    var lastScanMaxMediaId: Long
+        get() = prefs.getLong(LAST_SCAN_MAX_MEDIA_ID, 0L)
+        set(id) = prefs.edit().putLong(LAST_SCAN_MAX_MEDIA_ID, id).apply()
+
+    var lastScanTimestamp: Long
+        get() = prefs.getLong(LAST_SCAN_TIMESTAMP, 0L)
+        set(ts) = prefs.edit().putLong(LAST_SCAN_TIMESTAMP, ts).apply()
+
+
     fun addIncludedFolder(path: String) {
         val currIncludedFolders = HashSet<String>(includedFolders)
         currIncludedFolders.add(path)
