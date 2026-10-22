@@ -45,6 +45,7 @@ import com.bumptech.glide.request.target.Target
 import com.davemorrissey.labs.subscaleview.DecoderFactory
 import com.davemorrissey.labs.subscaleview.ImageDecoder
 import com.davemorrissey.labs.subscaleview.ImageRegionDecoder
+import android.graphics.drawable.Animatable
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import com.github.penfeizhou.animation.apng.APNGDrawable
 import com.github.penfeizhou.animation.avif.AVIFDrawable
@@ -120,6 +121,7 @@ class PhotoFragment : ViewPagerFragment() {
     private var mIsPanorama = false
     private var mIsSubsamplingVisible = false    // checking view.visibility is unreliable, use an extra variable for it
     private var mShouldResetImage = false
+    private var mIsGifPlaying = false
     private var mCurrentPortraitPhotoPath = ""
     private var mOriginalPath = ""
     private var mImageOrientation = -1
@@ -206,7 +208,7 @@ class PhotoFragment : ViewPagerFragment() {
 
         checkScreenDimensions()
         storeStateVariables()
-        if (!mIsFragmentVisible && activity is PhotoActivity) {
+        if (!mIsFragmentVisible && (activity is PhotoActivity || activity is PhotoVideoActivity)) {
             mIsFragmentVisible = true
         }
 
@@ -264,6 +266,13 @@ class PhotoFragment : ViewPagerFragment() {
         super.onPause()
         activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         storeStateVariables()
+        if (::mMedium.isInitialized && mMedium.isGIF()) {
+            mIsGifPlaying = false
+            val gifView = binding.gifView
+            ensureBackgroundThread {
+                gifView.setInputSource(null)
+            }
+        }
     }
 
     override fun onResume() {
@@ -279,7 +288,9 @@ class PhotoFragment : ViewPagerFragment() {
                 binding.subsamplingView.beGone()
                 loadImage()
             } else if (mMedium.isGIF()) {
-                loadGif()
+                if (mIsFragmentVisible && !mIsGifPlaying) {
+                    loadGif()
+                }
             } else if (mIsSubsamplingVisible && mShouldResetImage) {
                 binding.subsamplingView.onGlobalLayout {
                     binding.subsamplingView.resetView()
@@ -319,6 +330,18 @@ class PhotoFragment : ViewPagerFragment() {
             }
         }
 
+        if (::mMedium.isInitialized) {
+            if (mMedium.isGIF()) {
+                mIsGifPlaying = false
+                val gifView = binding.gifView
+                ensureBackgroundThread {
+                    gifView.setInputSource(null)
+                }
+            } else if (mMedium.isApng() || mMedium.isAvif() || mMedium.isWebP()) {
+                (binding.gesturesView.drawable as? Animatable)?.stop()
+            }
+        }
+
         mLoadZoomableViewHandler.removeCallbacksAndMessages(null)
     }
 
@@ -335,7 +358,10 @@ class PhotoFragment : ViewPagerFragment() {
                     measureScreen()
                     Handler().postDelayed({
                         binding.gifViewFrame.controller.resetState()
-                        loadGif()
+                        if (mIsFragmentVisible) {
+                            mIsGifPlaying = false
+                            loadGif()
+                        }
                     }, 50)
                 }
             }
@@ -352,13 +378,44 @@ class PhotoFragment : ViewPagerFragment() {
 
     override fun setMenuVisibility(menuVisible: Boolean) {
         super.setMenuVisibility(menuVisible)
+        val visibilityChanged = mIsFragmentVisible != menuVisible
         mIsFragmentVisible = menuVisible
-        if (mWasInit) {
-            val isNotAnimatedContent =
-                !mMedium.isGIF() && !mMedium.isApng() && !mMedium.isAvif() && !mMedium.isWebP()
-            if (isNotAnimatedContent) {
-                photoFragmentVisibilityChanged(menuVisible)
+        if (mWasInit && visibilityChanged) {
+            when {
+                mMedium.isGIF() -> gifFragmentVisibilityChanged(menuVisible)
+                mMedium.isApng() || mMedium.isAvif() || mMedium.isWebP() -> {
+                    animatedFragmentVisibilityChanged(menuVisible)
+                }
+                else -> photoFragmentVisibilityChanged(menuVisible)
             }
+        }
+    }
+
+    private fun gifFragmentVisibilityChanged(isVisible: Boolean) {
+        if (isVisible) {
+            if (!mIsGifPlaying) {
+                loadGif()
+            }
+        } else {
+            mIsGifPlaying = false
+            val gifView = binding.gifView
+            ensureBackgroundThread {
+                gifView.setInputSource(null)
+            }
+            binding.apply {
+                gifViewFrame.beGone()
+                gesturesView.beVisible()
+                gifViewFrame.controller.resetState()
+            }
+        }
+    }
+
+    private fun animatedFragmentVisibilityChanged(isVisible: Boolean) {
+        val animDrawable = binding.gesturesView.drawable as? Animatable
+        if (isVisible) {
+            animDrawable?.start()
+        } else {
+            animDrawable?.stop()
         }
     }
 
@@ -425,7 +482,12 @@ class PhotoFragment : ViewPagerFragment() {
             mImageOrientation = getImageOrientation()
             activity?.runOnUiThread {
                 when {
-                    mMedium.isGIF() -> loadGif()
+                    mMedium.isGIF() -> {
+                        loadGifThumbnail()
+                        if (mIsFragmentVisible && !mIsGifPlaying) {
+                            loadGif()
+                        }
+                    }
                     mMedium.isSVG() -> loadSVG()
                     mMedium.isApng() -> loadAPNG()
                     mMedium.isAvif() -> loadAVIF()
@@ -444,18 +506,48 @@ class PhotoFragment : ViewPagerFragment() {
                 InputSource.FileSource(pathToLoad)
             }
 
+            mIsGifPlaying = true
             binding.apply {
                 gesturesView.beGone()
                 gifViewFrame.beVisible()
+                val gif = gifView
                 ensureBackgroundThread {
-                    gifView.setInputSource(source)
+                    gif.setInputSource(source)
                 }
             }
         } catch (e: Exception) {
+            mIsGifPlaying = false
             loadBitmap()
         } catch (e: OutOfMemoryError) {
+            mIsGifPlaying = false
             loadBitmap()
         }
+    }
+
+    private fun loadGifThumbnail() {
+        if (context == null) return
+        val path = getFilePathToShow()
+        val priority = if (mIsFragmentVisible) Priority.IMMEDIATE else Priority.NORMAL
+        val options = RequestOptions()
+            .signature(mMedium.getKey())
+            .format(DecodeFormat.PREFER_ARGB_8888)
+            .priority(priority)
+            .diskCacheStrategy(DiskCacheStrategy.RESOURCE)
+            .fitCenter()
+            .run {
+                if (mCurrentRotationDegrees != 0) {
+                    transform(Rotate(mCurrentRotationDegrees))
+                        .diskCacheStrategy(DiskCacheStrategy.NONE)
+                } else {
+                    this
+                }
+            }
+
+        Glide.with(requireContext())
+            .asBitmap()
+            .load(path)
+            .apply(options)
+            .into(binding.gesturesView)
     }
 
     private fun loadSVG() {
@@ -472,6 +564,9 @@ class PhotoFragment : ViewPagerFragment() {
         if (context != null) {
             val drawable = APNGDrawable.fromFile(mMedium.path)
             binding.gesturesView.setImageDrawable(drawable)
+            if (!mIsFragmentVisible) {
+                drawable.stop()
+            }
         }
     }
 
@@ -484,6 +579,9 @@ class PhotoFragment : ViewPagerFragment() {
             }
 
             binding.gesturesView.setImageDrawable(drawable)
+            if (!mIsFragmentVisible) {
+                drawable.stop()
+            }
         }
     }
 
@@ -497,6 +595,9 @@ class PhotoFragment : ViewPagerFragment() {
                 loadWithGlide(path, addZoomableView)
             } else {
                 binding.gesturesView.setImageDrawable(drawable)
+                if (!mIsFragmentVisible) {
+                    drawable.stop()
+                }
             }
         } else {
             loadWithGlide(path, addZoomableView)
