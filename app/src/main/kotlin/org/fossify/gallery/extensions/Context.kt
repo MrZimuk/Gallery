@@ -249,7 +249,7 @@ fun Context.getDirsToShow(
     return if (config.groupDirectSubfolders) {
         dirs.forEach {
             it.subfoldersCount = 0
-            it.subfoldersMediaCount = it.mediaCnt
+            it.subfoldersMediaCount = if (it.containsMediaFilesDirectly) it.mediaCnt else 0
         }
 
         val filledDirs = fillWithSharedDirectParents(dirs)
@@ -475,10 +475,9 @@ fun Context.updateSubfolderCounts(
             ) {
                 if (child.containsMediaFilesDirectly) {
                     parentDir.subfoldersCount++
-                }
-
-                if (parentPath != childPath) {
-                    parentDir.subfoldersMediaCount += child.mediaCnt
+                    if (parentPath != childPath) {
+                        parentDir.subfoldersMediaCount += child.mediaCnt
+                    }
                 }
             }
         }
