@@ -200,56 +200,39 @@ fun Context.getSortedDirectories(source: ArrayList<Directory>): ArrayList<Direct
         return newDirsOrdered
     }
 
+    val isSortByName = sorting and SORT_BY_NAME != 0
+    val isSortByPath = sorting and SORT_BY_PATH != 0
+    val useNumericValue = sorting and SORT_USE_NUMERIC_VALUE != 0
+    val isDescending = sorting and SORT_DESCENDING != 0
+    val locale = Locale.getDefault()
+
+    if (isSortByName) {
+        dirs.forEach { dir ->
+            dir.sortValue = dir.name.normalizeString().lowercase(locale)
+        }
+    } else if (isSortByPath) {
+        dirs.forEach { dir ->
+            dir.sortValue = dir.path.lowercase(locale)
+        }
+    }
+
+    val alphanumericComparator = if (useNumericValue) AlphanumericComparator() else null
+
     dirs.sortWith { o1, o2 ->
-        o1 as Directory
-        o2 as Directory
-
         var result = when {
-            sorting and SORT_BY_NAME != 0 -> {
-                if (o1.sortValue.isEmpty()) {
-                    o1.sortValue = o1.name.lowercase(Locale.getDefault())
-                }
-
-                if (o2.sortValue.isEmpty()) {
-                    o2.sortValue = o2.name.lowercase(Locale.getDefault())
-                }
-
-                if (sorting and SORT_USE_NUMERIC_VALUE != 0) {
-                    AlphanumericComparator().compare(
-                        string1 = o1.sortValue.normalizeString().lowercase(Locale.getDefault()),
-                        string2 = o2.sortValue.normalizeString().lowercase(Locale.getDefault())
-                    )
+            isSortByName || isSortByPath -> {
+                if (alphanumericComparator != null) {
+                    alphanumericComparator.compare(o1.sortValue, o2.sortValue)
                 } else {
-                    o1.sortValue.normalizeString().lowercase(Locale.getDefault())
-                        .compareTo(o2.sortValue.normalizeString().lowercase(Locale.getDefault()))
-                }
-            }
-
-            sorting and SORT_BY_PATH != 0 -> {
-                if (o1.sortValue.isEmpty()) {
-                    o1.sortValue = o1.path.lowercase(Locale.getDefault())
-                }
-
-                if (o2.sortValue.isEmpty()) {
-                    o2.sortValue = o2.path.lowercase(Locale.getDefault())
-                }
-
-                if (sorting and SORT_USE_NUMERIC_VALUE != 0) {
-                    AlphanumericComparator().compare(
-                        string1 = o1.sortValue.lowercase(Locale.getDefault()),
-                        string2 = o2.sortValue.lowercase(Locale.getDefault())
-                    )
-                } else {
-                    o1.sortValue.lowercase(Locale.getDefault())
-                        .compareTo(o2.sortValue.lowercase(Locale.getDefault()))
+                    o1.sortValue.compareTo(o2.sortValue)
                 }
             }
 
             // SORT_BY_SIZE, SORT_BY_COUNT, SORT_BY_DATE_MODIFIED are numerical
-            else -> (o1.sortValue.toLongOrNull() ?: 0).compareTo(o2.sortValue.toLongOrNull() ?: 0)
+            else -> (o1.sortValue.toLongOrNull() ?: 0L).compareTo(o2.sortValue.toLongOrNull() ?: 0L)
         }
 
-        if (sorting and SORT_DESCENDING != 0) {
+        if (isDescending) {
             result *= -1
         }
         result
@@ -907,8 +890,8 @@ fun Context.getCachedDirectories(
             }
         }) as ArrayList<Directory>
 
+        val hiddenString = resources.getString(R.string.hidden)
         if (shouldShowHidden) {
-            val hiddenString = resources.getString(R.string.hidden)
             filteredDirectories.forEach {
                 val noMediaPath = "${it.path}/$NOMEDIA"
                 val hasNoMedia = if (folderNoMediaStatuses.keys.contains(noMediaPath)) {
@@ -925,6 +908,10 @@ fun Context.getCachedDirectories(
                 } else {
                     it.name.removeSuffix(hiddenString).trim()
                 }
+            }
+        } else {
+            filteredDirectories.forEach {
+                it.name = it.name.removeSuffix(hiddenString).trim()
             }
         }
 

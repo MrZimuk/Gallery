@@ -201,6 +201,7 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
     private var mStoredTextColor = 0
     private var mStoredPrimaryColor = 0
     private var mStoredStyleString = ""
+    private var mIsInitialFetchStarted = false
     private val binding by viewBinding(ActivityMainBinding::inflate)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -244,6 +245,18 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
         checkWhatsNewDialog()
         setupLatestMediaId()
 
+        initPinnedAndConfiguredFolders()
+        updateWidgets()
+        registerFileUpdateListener()
+
+        binding.directoriesSwitchSearching.setOnClickListener {
+            launchSearchActivity()
+        }
+
+        initMediaLoading()
+    }
+
+    private fun initPinnedAndConfiguredFolders() {
         if (!config.wereFavoritesPinned) {
             config.addPinnedFolders(hashSetOf(FAVORITES))
             config.wereFavoritesPinned = true
@@ -266,16 +279,20 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
             config.wasSortingByNumericValueAdded = true
             config.sorting = config.sorting or SORT_USE_NUMERIC_VALUE
         }
+    }
 
-        updateWidgets()
-        registerFileUpdateListener()
-
-        binding.directoriesSwitchSearching.setOnClickListener {
-            launchSearchActivity()
+    private fun initMediaLoading() {
+        setupLayoutManager()
+        if (hasAllPermissions(getPermissionsToRequest())) {
+            mIsInitialFetchStarted = true
+            getDirectories()
+            if (isRPlus() && !mWasMediaManagementPromptShown) {
+                mWasMediaManagementPromptShown = true
+                handleMediaManagementPrompt { }
+            }
+        } else {
+            handleMediaPermissions()
         }
-
-        // just request the permission, tryLoadGallery will then trigger in onResume
-        handleMediaPermissions()
     }
 
     private fun handleMediaPermissions(callback: (() -> Unit)? = null) {
@@ -601,7 +618,6 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
     }
 
     private fun tryLoadGallery() {
-        // avoid calling anything right after granting the permission, it will be called from onResume()
         val wasMissingPermission =
             config.appRunCount == 1 && !hasAllPermissions(getPermissionsToRequest())
         handleMediaPermissions {
@@ -619,9 +635,10 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
 
             if (config.showAll) {
                 showAllMedia()
-            } else {
+            } else if (!mIsInitialFetchStarted || binding.directoriesGrid.adapter == null) {
                 getDirectories()
             }
+            mIsInitialFetchStarted = false
 
             setupLayoutManager()
         }
@@ -1368,14 +1385,19 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
 
         val dirs = getSortedDirectories(newDirs)
         if (config.groupDirectSubfolders) {
-            mDirs = dirs.clone() as ArrayList<Directory>
+            mDirs = dirs
         }
 
         var isPlaceholderVisible = dirs.isEmpty()
+        val dirsToShow = getDirsToShow(
+            dirs = dirs,
+            allDirs = mDirs,
+            currentPathPrefix = mCurrentPathPrefix
+        )
 
         runOnUiThread {
-            checkPlaceholderVisibility(dirs)
-            setupAdapter(dirs.clone() as ArrayList<Directory>)
+            checkPlaceholderVisibility(dirsToShow)
+            setupAdapter(dirs, dirsToShow = dirsToShow)
         }
 
         // cached folders have been loaded, reconcile with MediaStore in background
@@ -1634,45 +1656,41 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
     private fun setupAdapter(
         dirs: ArrayList<Directory>,
         textToSearch: String = binding.mainMenu.getCurrentQuery(),
-        forceRecreate: Boolean = false
+        forceRecreate: Boolean = false,
+        dirsToShow: ArrayList<Directory>? = null
     ) {
-        val currAdapter = binding.directoriesGrid.adapter
-        val distinctDirs = dirs
-            .distinctBy { it.path.getDistinctPath() }
-            .toMutableList() as ArrayList<Directory>
-
-        val sortedDirs = getSortedDirectories(distinctDirs)
-        var dirsToShow = getDirsToShow(
-            dirs = sortedDirs,
+        val computedDirsToShow = dirsToShow ?: getDirsToShow(
+            dirs = dirs,
             allDirs = mDirs,
             currentPathPrefix = mCurrentPathPrefix
-        ).clone() as ArrayList<Directory>
+        )
 
-        if (currAdapter == null || forceRecreate) {
-            mDirsIgnoringSearch = dirs
-            initZoomListener()
-            DirectoryAdapter(
-                this,
-                dirsToShow,
-                this,
-                binding.directoriesGrid,
-                isPickIntent(intent) || isGetAnyContentIntent(intent),
-                binding.directoriesRefreshLayout
-            ) {
-                val clickedDir = it as Directory
-                val path = clickedDir.path
-                if (clickedDir.subfoldersCount == 1 || !config.groupDirectSubfolders) {
-                    if (path != config.tempFolderPath) {
-                        itemClicked(path)
+        runOnUiThread {
+            val currAdapter = binding.directoriesGrid.adapter
+            if (currAdapter == null || forceRecreate) {
+                mDirsIgnoringSearch = dirs
+                initZoomListener()
+                DirectoryAdapter(
+                    this,
+                    computedDirsToShow,
+                    this,
+                    binding.directoriesGrid,
+                    isPickIntent(intent) || isGetAnyContentIntent(intent),
+                    binding.directoriesRefreshLayout
+                ) {
+                    val clickedDir = it as Directory
+                    val path = clickedDir.path
+                    if (clickedDir.subfoldersCount == 1 || !config.groupDirectSubfolders) {
+                        if (path != config.tempFolderPath) {
+                            itemClicked(path)
+                        }
+                    } else {
+                        mCurrentPathPrefix = path
+                        mOpenedSubfolders.add(path)
+                        setupAdapter(mDirs, "")
                     }
-                } else {
-                    mCurrentPathPrefix = path
-                    mOpenedSubfolders.add(path)
-                    setupAdapter(mDirs, "")
-                }
-            }.apply {
-                setupZoomListener(mZoomListener)
-                runOnUiThread {
+                }.apply {
+                    setupZoomListener(mZoomListener)
                     binding.directoriesGrid.adapter = this
                     setupScrollDirection()
 
@@ -1680,25 +1698,24 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
                         binding.directoriesGrid.scheduleLayoutAnimation()
                     }
                 }
-            }
-        } else {
-            runOnUiThread {
+            } else {
+                var displayDirs = computedDirsToShow
                 if (textToSearch.isNotEmpty()) {
-                    dirsToShow = dirsToShow
+                    displayDirs = displayDirs
                         .filter { it.name.contains(textToSearch, true) }
                         .sortedBy { !it.name.startsWith(textToSearch, true) }
                         .toMutableList() as ArrayList
                 }
-                checkPlaceholderVisibility(dirsToShow)
+                checkPlaceholderVisibility(displayDirs)
 
-                (binding.directoriesGrid.adapter as? DirectoryAdapter)?.updateDirs(dirsToShow)
+                (binding.directoriesGrid.adapter as? DirectoryAdapter)?.updateDirs(displayDirs)
             }
-        }
 
-        // recyclerview sometimes becomes empty at init/update, triggering an invisible refresh like this seems to work fine
-        binding.directoriesGrid.postDelayed({
-            binding.directoriesGrid.scrollBy(0, 0)
-        }, 500)
+            // recyclerview sometimes becomes empty at init/update, triggering an invisible refresh like this seems to work fine
+            binding.directoriesGrid.postDelayed({
+                binding.directoriesGrid.scrollBy(0, 0)
+            }, 500)
+        }
     }
 
     private fun setupScrollDirection() {

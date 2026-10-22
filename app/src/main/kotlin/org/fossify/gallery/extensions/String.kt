@@ -63,8 +63,9 @@ fun String.shouldFolderBeVisible(
         var containsNoMediaOrDot = containsNoMedia || contains("/.")
         if (!containsNoMediaOrDot) {
             var curPath = this
-            for (i in 0 until count { it == '/' } - 1) {
+            while (curPath.contains('/')) {
                 curPath = curPath.substringBeforeLast('/')
+                if (curPath.isEmpty()) break
                 val parentPathToCheck = "$curPath/$NOMEDIA"
                 if (folderNoMediaStatuses.containsKey(parentPathToCheck)) {
                     if (folderNoMediaStatuses[parentPathToCheck] == true) {
@@ -72,7 +73,7 @@ fun String.shouldFolderBeVisible(
                         break
                     }
                 } else {
-                    val noMediaExists = File(parentPathToCheck).exists()
+                    val noMediaExists = (!isRPlus() || isExternalStorageManager()) && File(parentPathToCheck).exists()
                     callback(parentPathToCheck, noMediaExists)
                     if (noMediaExists) {
                         containsNoMediaOrDot = true
