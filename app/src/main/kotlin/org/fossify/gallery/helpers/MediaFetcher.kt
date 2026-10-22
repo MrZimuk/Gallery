@@ -55,14 +55,32 @@ class MediaFetcher(val context: Context) {
             }
 
             if (curMedia.isEmpty()) {
+                val folderLastModifieds = if (lastModifieds.isEmpty() && getProperLastModified) {
+                    getFolderLastModifieds(curPath)
+                } else {
+                    lastModifieds
+                }
+
+                val folderDateTakens = if (dateTakens.isEmpty() && getProperDateTaken) {
+                    getFolderDateTakens(curPath)
+                } else {
+                    dateTakens
+                }
+
                 val newMedia = getMediaInFolder(
                     curPath, isPickImage, isPickVideo, filterMedia, getProperDateTaken, getProperLastModified, getProperFileSize,
-                    favoritePaths, getVideoDurations, lastModifieds.clone() as HashMap<String, Long>, dateTakens.clone() as HashMap<String, Long>
+                    favoritePaths, getVideoDurations, folderLastModifieds, folderDateTakens
                 )
 
                 if (curPath == FAVORITES && isRPlus() && !isExternalStorageManager()) {
-                    val files =
-                        getAndroid11FolderMedia(isPickImage, isPickVideo, favoritePaths, true, getProperDateTaken, dateTakens.clone() as HashMap<String, Long>)
+                    val files = getAndroid11FolderMedia(
+                        isPickImage = isPickImage,
+                        isPickVideo = isPickVideo,
+                        favoritePaths = favoritePaths,
+                        getFavoritePathsOnly = true,
+                        getProperDateTaken = getProperDateTaken,
+                        dateTakens = folderDateTakens
+                    )
                     newMedia.forEach { newMedium ->
                         for ((folder, media) in files) {
                             media.forEach { medium ->
@@ -81,23 +99,26 @@ class MediaFetcher(val context: Context) {
         return curMedia
     }
 
-    fun getFoldersToScan(): ArrayList<String> {
+    fun getFoldersToScan(knownFolders: Collection<String>? = null): ArrayList<String> {
         return try {
             val OTGPath = context.config.OTGPath
             val folders = getLatestFileFolders()
             folders.addAll(arrayListOf(
                 Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM).toString(),
                 "${Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM)}/Camera",
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES).toString()
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES).toString(),
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).toString(),
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES).toString()
             ).filter { context.getDoesFilePathExist(it, OTGPath) })
 
             val filterMedia = context.config.filterMedia
             val uri = Files.getContentUri("external")
             val projection = arrayOf(Images.Media.DATA)
-            val selection = getSelectionQuery(filterMedia)
-            val selectionArgs = getSelectionArgsQuery(filterMedia).toTypedArray()
-            val cursor = context.contentResolver.query(uri, projection, selection, selectionArgs, null)
-            folders.addAll(parseCursor(cursor!!))
+            val selection = getSelectionQuery(filterMedia).ifEmpty { null }
+            val cursor = context.contentResolver.query(uri, projection, selection, null, null)
+            if (cursor != null) {
+                folders.addAll(parseCursor(cursor))
+            }
 
             val config = context.config
             val shouldShowHidden = config.shouldShowHidden
@@ -108,6 +129,13 @@ class MediaFetcher(val context: Context) {
             }
 
             val includedPaths = config.includedFolders
+
+            // If caller provided knownFolders (e.g. MainActivity already caching dirs),
+            // remove them early so we don't do expensive checks on thousands of already-known folders
+            if (knownFolders != null && knownFolders.isNotEmpty()) {
+                val knownSet = if (knownFolders is Set) knownFolders else knownFolders.toHashSet()
+                folders.removeAll(knownSet)
+            }
 
             val folderNoMediaStatuses = HashMap<String, Boolean>()
             val distinctPathsMap = HashMap<String, String>()
@@ -178,74 +206,29 @@ class MediaFetcher(val context: Context) {
 
     private fun getSelectionQuery(filterMedia: Int): String {
         val query = StringBuilder()
-        if (filterMedia and TYPE_IMAGES != 0) {
-            photoExtensions.forEach {
-                query.append("${Images.Media.DATA} LIKE ? OR ")
+        val getImages = filterMedia and (TYPE_IMAGES or TYPE_GIFS or TYPE_PORTRAITS) != 0
+        val getVideos = filterMedia and TYPE_VIDEOS != 0
+
+        if (getImages && getVideos) {
+            val imgType = Files.FileColumns.MEDIA_TYPE_IMAGE
+            val vidType = Files.FileColumns.MEDIA_TYPE_VIDEO
+            query.append("(${Files.FileColumns.MEDIA_TYPE} = $imgType OR ${Files.FileColumns.MEDIA_TYPE} = $vidType)")
+        } else if (getImages) {
+            query.append("${Files.FileColumns.MEDIA_TYPE} = ${Files.FileColumns.MEDIA_TYPE_IMAGE}")
+        } else if (getVideos) {
+            query.append("${Files.FileColumns.MEDIA_TYPE} = ${Files.FileColumns.MEDIA_TYPE_VIDEO}")
+        }
+
+        if (filterMedia and TYPE_RAWS != 0 || filterMedia and TYPE_SVGS != 0) {
+            if (query.isNotEmpty()) {
+                query.insert(0, "(")
+                query.append(" OR ${Images.Media.MIME_TYPE} LIKE 'image/%')")
+            } else {
+                query.append("${Images.Media.MIME_TYPE} LIKE 'image/%'")
             }
         }
 
-        if (filterMedia and TYPE_PORTRAITS != 0) {
-            query.append("${Images.Media.DATA} LIKE ? OR ")
-            query.append("${Images.Media.DATA} LIKE ? OR ")
-        }
-
-        if (filterMedia and TYPE_VIDEOS != 0) {
-            videoExtensions.forEach {
-                query.append("${Images.Media.DATA} LIKE ? OR ")
-            }
-        }
-
-        if (filterMedia and TYPE_GIFS != 0) {
-            query.append("${Images.Media.DATA} LIKE ? OR ")
-        }
-
-        if (filterMedia and TYPE_RAWS != 0) {
-            rawExtensions.forEach {
-                query.append("${Images.Media.DATA} LIKE ? OR ")
-            }
-        }
-
-        if (filterMedia and TYPE_SVGS != 0) {
-            query.append("${Images.Media.DATA} LIKE ? OR ")
-        }
-
-        return query.toString().trim().removeSuffix("OR")
-    }
-
-    private fun getSelectionArgsQuery(filterMedia: Int): ArrayList<String> {
-        val args = ArrayList<String>()
-        if (filterMedia and TYPE_IMAGES != 0) {
-            photoExtensions.forEach {
-                args.add("%$it")
-            }
-        }
-
-        if (filterMedia and TYPE_PORTRAITS != 0) {
-            args.add("%.jpg")
-            args.add("%.jpeg")
-        }
-
-        if (filterMedia and TYPE_VIDEOS != 0) {
-            videoExtensions.forEach {
-                args.add("%$it")
-            }
-        }
-
-        if (filterMedia and TYPE_GIFS != 0) {
-            args.add("%.gif")
-        }
-
-        if (filterMedia and TYPE_RAWS != 0) {
-            rawExtensions.forEach {
-                args.add("%$it")
-            }
-        }
-
-        if (filterMedia and TYPE_SVGS != 0) {
-            args.add("%.svg")
-        }
-
-        return args
+        return query.toString()
     }
 
     private fun parseCursor(cursor: Cursor): LinkedHashSet<String> {
@@ -253,15 +236,23 @@ class MediaFetcher(val context: Context) {
         val config = context.config
         val includedFolders = config.includedFolders
         val OTGPath = config.OTGPath
-        val foldersToScan = config.everShownFolders.filter { it == FAVORITES || it == RECYCLE_BIN || context.getDoesFilePathExist(it, OTGPath) }.toHashSet()
+        val foldersToScan = config.everShownFolders.filter {
+            it == FAVORITES || it == RECYCLE_BIN || context.getDoesFilePathExist(it, OTGPath)
+        }.toHashSet()
 
+        val dataIndex = cursor.getColumnIndex(Images.Media.DATA)
         cursor.use {
-            if (cursor.moveToFirst()) {
+            if (dataIndex != -1 && cursor.moveToFirst()) {
                 do {
-                    val path = cursor.getStringValue(Images.Media.DATA)
-                    val parentPath = File(path).parent ?: continue
-                    if (!includedFolders.contains(parentPath) && !foldersToIgnore.contains(parentPath)) {
-                        foldersToScan.add(parentPath)
+                    val path = cursor.getString(dataIndex)
+                    if (path != null) {
+                        val lastSlash = path.lastIndexOf('/')
+                        if (lastSlash > 0) {
+                            val parentPath = path.substring(0, lastSlash)
+                            if (!includedFolders.contains(parentPath) && !foldersToIgnore.contains(parentPath)) {
+                                foldersToScan.add(parentPath)
+                            }
+                        }
                     }
                 } while (cursor.moveToNext())
             }
@@ -361,7 +352,7 @@ class MediaFetcher(val context: Context) {
 
             var size = 0L
             if (checkProperFileSize || checkFileExistence) {
-                var newSize = fileSizes.remove(path)
+                var newSize = fileSizes[path]
                 if (newSize == null) {
                     newSize = file.length()
                 }
@@ -381,7 +372,7 @@ class MediaFetcher(val context: Context) {
                     media.add(this)
                 }
             } else {
-                val lastModified = lastModifieds.remove(path) ?: file.lastModified()
+                val lastModified = lastModifieds[path] ?: file.lastModified()
 
                 var dateTaken = lastModified
                 val rawDuration = if (getVideoDurations && isVideo) context.getDuration(path) ?: 0 else 0
@@ -392,7 +383,7 @@ class MediaFetcher(val context: Context) {
                 }
 
                 if (getProperDateTaken) {
-                    var newDateTaken = dateTakens.remove(path)
+                    var newDateTaken = dateTakens[path]
                     if (newDateTaken == null) {
                         newDateTaken = if (getProperLastModified) {
                             lastModified

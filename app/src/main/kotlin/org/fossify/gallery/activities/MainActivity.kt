@@ -1093,6 +1093,86 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
         }
     }
 
+    private enum class CachedFolderStatus {
+        UNCHANGED,
+        CHANGED,
+        REMOVE
+    }
+
+    private fun isRecycleBinUnchanged(directory: Directory): CachedFolderStatus {
+        val binCount = try {
+            mediaDB.getDeletedMediaCount()
+        } catch (e: Exception) {
+            0L
+        }
+        val tmbValid = directory.tmb.isNotEmpty() && getDoesFilePathExist(directory.tmb, config.OTGPath)
+        val isUnchanged = binCount == directory.mediaCnt.toLong() && tmbValid
+        return when {
+            binCount == 0L -> CachedFolderStatus.REMOVE
+            isUnchanged -> CachedFolderStatus.UNCHANGED
+            else -> CachedFolderStatus.CHANGED
+        }
+    }
+
+    private fun isFavoritesUnchanged(directory: Directory): CachedFolderStatus {
+        val favCount = try {
+            mediaDB.getFavoritesCount()
+        } catch (e: Exception) {
+            0L
+        }
+        val tmbValid = directory.tmb.isNotEmpty() && getDoesFilePathExist(directory.tmb, config.OTGPath)
+        val isUnchanged = favCount == directory.mediaCnt.toLong() && tmbValid
+        return when {
+            favCount == 0L -> CachedFolderStatus.REMOVE
+            isUnchanged -> CachedFolderStatus.UNCHANGED
+            else -> CachedFolderStatus.CHANGED
+        }
+    }
+
+    private fun countFolderMedia(fileNames: Array<String>?): Int {
+        if (fileNames.isNullOrEmpty()) {
+            return 0
+        }
+
+        val shouldShowHidden = config.shouldShowHidden
+        var count = 0
+        for (name in fileNames) {
+            val isHidden = !shouldShowHidden && name.startsWith('.')
+            if (!isHidden && name.isMediaFile()) {
+                count++
+            }
+        }
+        return count
+    }
+
+    private fun isNormalFolderUnchanged(directory: Directory): CachedFolderStatus {
+        val dirFile = File(directory.path)
+        val fileNames = if (dirFile.isDirectory) dirFile.list() else null
+        val quickMediaCount = countFolderMedia(fileNames)
+        val tmbValid = directory.tmb.isNotEmpty() && File(directory.tmb).exists()
+        val isUnchanged = quickMediaCount == directory.mediaCnt && tmbValid
+        return when {
+            quickMediaCount == 0 -> CachedFolderStatus.REMOVE
+            isUnchanged -> CachedFolderStatus.UNCHANGED
+            else -> CachedFolderStatus.CHANGED
+        }
+    }
+
+    private fun getCachedFolderStatus(
+        directory: Directory,
+        tempFolderPath: String
+    ): CachedFolderStatus {
+        if (isPathOnOTG(directory.path) || directory.path == tempFolderPath) {
+            return CachedFolderStatus.CHANGED
+        }
+
+        return when {
+            directory.isRecycleBin() -> isRecycleBinUnchanged(directory)
+            directory.areFavorites() -> isFavoritesUnchanged(directory)
+            else -> isNormalFolderUnchanged(directory)
+        }
+    }
+
     private fun gotDirectories(newDirs: ArrayList<Directory>) {
         mIsGettingDirs = false
         mShouldStopFetching = false
@@ -1135,8 +1215,6 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
         val tempFolderPath = config.tempFolderPath
         val getProperFileSize = config.directorySorting and SORT_BY_SIZE != 0
         val dirPathsToRemove = ArrayList<String>()
-        val lastModifieds = mLastMediaFetcher!!.getLastModifieds()
-        val dateTakens = mLastMediaFetcher!!.getDateTakens()
 
         if (
             config.showRecycleBinAtFolders
@@ -1176,102 +1254,108 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
             favoritePaths = favoritePaths,
             getFavoritePathsOnly = false,
             getProperDateTaken = true,
-            dateTakens = dateTakens
+            dateTakens = HashMap()
         )
         try {
+            var anyDirectoryChanged = false
             for (directory in dirs) {
                 if (mShouldStopFetching || isDestroyed || isFinishing) {
                     return
                 }
 
-                val sorting = config.getFolderSorting(directory.path)
-                val grouping = config.getFolderGrouping(directory.path)
-                val getProperDateTaken = config.directorySorting and SORT_BY_DATE_TAKEN != 0
-                        || sorting and SORT_BY_DATE_TAKEN != 0
-                        || grouping and GROUP_BY_DATE_TAKEN_DAILY != 0
-                        || grouping and GROUP_BY_DATE_TAKEN_MONTHLY != 0
+                val status = getCachedFolderStatus(directory, tempFolderPath)
+                if (status == CachedFolderStatus.REMOVE) {
+                    dirPathsToRemove.add(directory.path)
+                } else if (status == CachedFolderStatus.CHANGED) {
+                    val sorting = config.getFolderSorting(directory.path)
+                    val grouping = config.getFolderGrouping(directory.path)
+                    val getProperDateTaken = config.directorySorting and SORT_BY_DATE_TAKEN != 0
+                            || sorting and SORT_BY_DATE_TAKEN != 0
+                            || grouping and GROUP_BY_DATE_TAKEN_DAILY != 0
+                            || grouping and GROUP_BY_DATE_TAKEN_MONTHLY != 0
 
-                val getProperLastModified =
-                    config.directorySorting and SORT_BY_DATE_MODIFIED != 0
-                            || sorting and SORT_BY_DATE_MODIFIED != 0
-                            || grouping and GROUP_BY_LAST_MODIFIED_DAILY != 0
-                            || grouping and GROUP_BY_LAST_MODIFIED_MONTHLY != 0
+                    val getProperLastModified =
+                        config.directorySorting and SORT_BY_DATE_MODIFIED != 0
+                                || sorting and SORT_BY_DATE_MODIFIED != 0
+                                || grouping and GROUP_BY_LAST_MODIFIED_DAILY != 0
+                                || grouping and GROUP_BY_LAST_MODIFIED_MONTHLY != 0
 
-                val curMedia = mLastMediaFetcher!!.getFilesFrom(
-                    curPath = directory.path,
-                    isPickImage = getImagesOnly,
-                    isPickVideo = getVideosOnly,
-                    getProperDateTaken = getProperDateTaken,
-                    getProperLastModified = getProperLastModified,
-                    getProperFileSize = getProperFileSize,
-                    favoritePaths = favoritePaths,
-                    getVideoDurations = false,
-                    lastModifieds = lastModifieds,
-                    dateTakens = dateTakens,
-                    android11Files = android11Files
-                )
-
-                val newDir = if (curMedia.isEmpty()) {
-                    if (directory.path != tempFolderPath) {
-                        dirPathsToRemove.add(directory.path)
-                    }
-                    directory
-                } else {
-                    createDirectoryFromMedia(
-                        path = directory.path,
-                        curMedia = curMedia,
-                        albumCovers = albumCovers,
-                        hiddenString = hiddenString,
-                        includedFolders = includedFolders,
+                    val curMedia = mLastMediaFetcher!!.getFilesFrom(
+                        curPath = directory.path,
+                        isPickImage = getImagesOnly,
+                        isPickVideo = getVideosOnly,
+                        getProperDateTaken = getProperDateTaken,
+                        getProperLastModified = getProperLastModified,
                         getProperFileSize = getProperFileSize,
-                        noMediaFolders = noMediaFolders
+                        favoritePaths = favoritePaths,
+                        getVideoDurations = false,
+                        lastModifieds = HashMap(),
+                        dateTakens = HashMap(),
+                        android11Files = android11Files
                     )
-                }
 
-                // we are looping through the already displayed folders looking for changes, do not do anything if nothing changed
-                if (directory.copy(subfoldersCount = 0, subfoldersMediaCount = 0) == newDir) {
-                    continue
-                }
-
-                directory.apply {
-                    tmb = newDir.tmb
-                    name = newDir.name
-                    mediaCnt = newDir.mediaCnt
-                    modified = newDir.modified
-                    taken = newDir.taken
-                    this@apply.size = newDir.size
-                    types = newDir.types
-                    sortValue = getDirectorySortingValue(curMedia, path, name, size, mediaCnt)
-                }
-
-                setupAdapter(dirs)
-
-                // update directories and media files in the local db, delete invalid items. Intentionally creating a new thread
-                updateDBDirectory(directory)
-                if (!directory.isRecycleBin() && !directory.areFavorites()) {
-                    Thread {
-                        try {
-                            mediaDB.insertAll(curMedia)
-                        } catch (ignored: Exception) {
+                    val newDir = if (curMedia.isEmpty()) {
+                        if (directory.path != tempFolderPath) {
+                            dirPathsToRemove.add(directory.path)
                         }
-                    }.start()
-                }
+                        directory
+                    } else {
+                        createDirectoryFromMedia(
+                            path = directory.path,
+                            curMedia = curMedia,
+                            albumCovers = albumCovers,
+                            hiddenString = hiddenString,
+                            includedFolders = includedFolders,
+                            getProperFileSize = getProperFileSize,
+                            noMediaFolders = noMediaFolders
+                        )
+                    }
 
-                if (!directory.isRecycleBin()) {
-                    getCachedMedia(directory.path, getVideosOnly, getImagesOnly) {
-                        val mediaToDelete = ArrayList<Medium>()
-                        it.forEach {
-                            if (!curMedia.contains(it)) {
-                                val medium = it as? Medium
-                                val path = medium?.path
-                                if (path != null) {
-                                    mediaToDelete.add(medium)
+                    if (directory.copy(subfoldersCount = 0, subfoldersMediaCount = 0) != newDir) {
+                        directory.apply {
+                            tmb = newDir.tmb
+                            name = newDir.name
+                            mediaCnt = newDir.mediaCnt
+                            modified = newDir.modified
+                            taken = newDir.taken
+                            this@apply.size = newDir.size
+                            types = newDir.types
+                            sortValue = getDirectorySortingValue(curMedia, path, name, size, mediaCnt)
+                        }
+
+                        anyDirectoryChanged = true
+
+                        updateDBDirectory(directory)
+                        if (!directory.isRecycleBin() && !directory.areFavorites()) {
+                            Thread {
+                                try {
+                                    mediaDB.insertAll(curMedia)
+                                } catch (ignored: Exception) {
                                 }
+                            }.start()
+                        }
+
+                        if (!directory.isRecycleBin()) {
+                            getCachedMedia(directory.path, getVideosOnly, getImagesOnly) {
+                                val mediaToDelete = ArrayList<Medium>()
+                                it.forEach {
+                                    if (!curMedia.contains(it)) {
+                                        val medium = it as? Medium
+                                        val path = medium?.path
+                                        if (path != null) {
+                                            mediaToDelete.add(medium)
+                                        }
+                                    }
+                                }
+                                mediaDB.deleteMedia(*mediaToDelete.toTypedArray())
                             }
                         }
-                        mediaDB.deleteMedia(*mediaToDelete.toTypedArray())
                     }
                 }
+            }
+
+            if (anyDirectoryChanged) {
+                setupAdapter(dirs)
             }
 
             if (dirPathsToRemove.isNotEmpty()) {
@@ -1285,24 +1369,12 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
         } catch (ignored: Exception) {
         }
 
-        val foldersToScan = mLastMediaFetcher!!.getFoldersToScan()
+        val knownFolderPaths = dirs.mapTo(HashSet()) { it.path }
+        val foldersToScan = mLastMediaFetcher!!.getFoldersToScan(knownFolders = knownFolderPaths)
         foldersToScan.remove(FAVORITES)
-        foldersToScan.add(0, FAVORITES)
-        if (config.showRecycleBinAtFolders) {
-            if (foldersToScan.contains(RECYCLE_BIN)) {
-                foldersToScan.remove(RECYCLE_BIN)
-                foldersToScan.add(0, RECYCLE_BIN)
-            } else {
-                foldersToScan.add(0, RECYCLE_BIN)
-            }
-        } else {
-            foldersToScan.remove(RECYCLE_BIN)
-        }
+        foldersToScan.remove(RECYCLE_BIN)
 
-        dirs.filterNot { it.path == RECYCLE_BIN || it.path == FAVORITES }.forEach {
-            foldersToScan.remove(it.path)
-        }
-
+        var addedNewDirs = false
         // check the remaining folders which were not cached at all yet
         for (folder in foldersToScan) {
             if (mShouldStopFetching || isDestroyed || isFinishing) {
@@ -1330,46 +1402,48 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
                 getProperFileSize = getProperFileSize,
                 favoritePaths = favoritePaths,
                 getVideoDurations = false,
-                lastModifieds = lastModifieds,
-                dateTakens = dateTakens,
+                lastModifieds = HashMap(),
+                dateTakens = HashMap(),
                 android11Files = android11Files
             )
 
-            if (newMedia.isEmpty()) {
-                continue
-            }
-
-            if (isPlaceholderVisible) {
-                isPlaceholderVisible = false
-                runOnUiThread {
-                    binding.directoriesEmptyPlaceholder.beGone()
-                    binding.directoriesEmptyPlaceholder2.beGone()
-                    binding.directoriesFastscroller.beVisible()
-                }
-            }
-
-            val newDir = createDirectoryFromMedia(
-                path = folder,
-                curMedia = newMedia,
-                albumCovers = albumCovers,
-                hiddenString = hiddenString,
-                includedFolders = includedFolders,
-                getProperFileSize = getProperFileSize,
-                noMediaFolders = noMediaFolders
-            )
-            dirs.add(newDir)
-            setupAdapter(dirs)
-
-            // make sure to create a new thread for these operations, dont just use the common bg thread
-            Thread {
-                try {
-                    directoryDB.insert(newDir)
-                    if (folder != RECYCLE_BIN && folder != FAVORITES) {
-                        mediaDB.insertAll(newMedia)
+            if (newMedia.isNotEmpty()) {
+                if (isPlaceholderVisible) {
+                    isPlaceholderVisible = false
+                    runOnUiThread {
+                        binding.directoriesEmptyPlaceholder.beGone()
+                        binding.directoriesEmptyPlaceholder2.beGone()
+                        binding.directoriesFastscroller.beVisible()
                     }
-                } catch (ignored: Exception) {
                 }
-            }.start()
+
+                val newDir = createDirectoryFromMedia(
+                    path = folder,
+                    curMedia = newMedia,
+                    albumCovers = albumCovers,
+                    hiddenString = hiddenString,
+                    includedFolders = includedFolders,
+                    getProperFileSize = getProperFileSize,
+                    noMediaFolders = noMediaFolders
+                )
+                dirs.add(newDir)
+                addedNewDirs = true
+
+                // make sure to create a new thread for these operations, dont just use the common bg thread
+                Thread {
+                    try {
+                        directoryDB.insert(newDir)
+                        if (folder != RECYCLE_BIN && folder != FAVORITES) {
+                            mediaDB.insertAll(newMedia)
+                        }
+                    } catch (ignored: Exception) {
+                    }
+                }.start()
+            }
+        }
+
+        if (addedNewDirs) {
+            setupAdapter(dirs)
         }
 
         mLoadedInitialPhotos = true
@@ -1397,11 +1471,19 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
 
         try {
             // scan the internal storage from time to time for new folders
-            if (config.appRunCount == 1 || config.appRunCount % 30 == 0) {
+            if (config.appRunCount == 1) {
                 everShownFolders.addAll(getFoldersWithMedia(config.internalStoragePath))
+            } else if (config.appRunCount % 30 == 0) {
+                ensureBackgroundThread {
+                    try {
+                        val backgroundEverShown = config.everShownFolders.toMutableSet() as HashSet<String>
+                        backgroundEverShown.addAll(getFoldersWithMedia(config.internalStoragePath))
+                        config.everShownFolders = backgroundEverShown
+                    } catch (ignored: Exception) {
+                    }
+                }
             }
 
-            // catch some extreme exceptions like too many everShownFolders for storing, shouldnt really happen
             config.everShownFolders = everShownFolders
         } catch (e: Exception) {
             config.everShownFolders = HashSet()
