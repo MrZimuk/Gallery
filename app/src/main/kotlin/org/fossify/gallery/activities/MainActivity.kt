@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.provider.MediaStore
 import android.provider.MediaStore.Images
@@ -27,6 +28,7 @@ import org.fossify.commons.extensions.getDoesFilePathExist
 import org.fossify.commons.extensions.getFileCount
 import org.fossify.commons.extensions.getFilePublicUri
 import org.fossify.commons.extensions.getFilenameFromPath
+import org.fossify.commons.extensions.getParentPath
 import org.fossify.commons.extensions.getLatestMediaByDateId
 import org.fossify.commons.extensions.getLatestMediaId
 import org.fossify.commons.extensions.getMimeType
@@ -54,6 +56,7 @@ import org.fossify.commons.extensions.isSvg
 import org.fossify.commons.extensions.isVideoFast
 import org.fossify.commons.extensions.launchMoreAppsFromUsIntent
 import org.fossify.commons.extensions.recycleBinPath
+import org.fossify.commons.extensions.scanPathRecursively
 import org.fossify.commons.extensions.sdCardPath
 import org.fossify.commons.extensions.showErrorToast
 import org.fossify.commons.extensions.toFileDirItem
@@ -1165,12 +1168,6 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
         return favCount == directory.mediaCnt.toLong() && tmbValid
     }
 
-    private fun isHiddenOrNoMediaMissing(path: String): Boolean {
-        val isHiddenOrNoMedia = path.isThisOrParentFolderHidden() || File(path, NOMEDIA).exists()
-        if (!isHiddenOrNoMedia) return true
-        val dirFile = File(path)
-        return !dirFile.exists() || !dirFile.isDirectory
-    }
 
     private fun reconcileSpecialDirectory(
         directory: Directory,
@@ -1231,8 +1228,11 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
         val path = directory.path
         val currentCount = summary.folderCounts[normPath]
         if (currentCount == null) {
-            if (isHiddenOrNoMediaMissing(path)) {
+            val dirFile = File(path)
+            if (!dirFile.exists() || !dirFile.isDirectory) {
                 dirPathsToRemove.add(path)
+            } else {
+                foldersToRescan.add(directory)
             }
         } else if (currentCount != directory.mediaCnt) {
             foldersToRescan.add(directory)
@@ -1402,7 +1402,8 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
 
         // cached folders have been loaded, reconcile with MediaStore in background
         mLastMediaFetcher?.shouldStop = true
-        mLastMediaFetcher = MediaFetcher(applicationContext)
+        val fetcher = MediaFetcher(applicationContext)
+        mLastMediaFetcher = fetcher
         val getImages = mIsPickImageIntent || mIsGetImageContentIntent
         val getVideos = mIsPickVideoIntent || mIsGetVideoContentIntent
         val getImagesOnly = getImages && !getVideos
@@ -1414,7 +1415,6 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
         val noMediaFolders = getNoMediaFoldersSync()
         val getProperFileSize = config.directorySorting and SORT_BY_SIZE != 0
         val dirPathsToRemove = ArrayList<String>()
-        val foldersToRescan = ArrayList<Directory>()
 
         if (
             config.showRecycleBinAtFolders
@@ -1448,13 +1448,13 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
         }
 
         val android11Files = if (isRPlus() && !isExternalStorageManager()) {
-            mLastMediaFetcher?.getAndroid11FolderMedia(
+            fetcher.getAndroid11FolderMedia(
                 isPickImage = getImagesOnly,
                 isPickVideo = getVideosOnly,
                 favoritePaths = favoritePaths,
                 getFavoritePathsOnly = false,
                 getProperDateTaken = true,
-                dateTakens = HashMap()
+                dateTakens = HashMap<String, Long>()
             )
         } else {
             null
@@ -1472,14 +1472,26 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
             android11Files = android11Files
         )
 
+        reconcileDirectories(dirs, scanConfig, fetcher, isPlaceholderVisible)
+    }
+
+    private fun isScanInterrupted(fetcher: MediaFetcher? = null): Boolean {
+        if (fetcher?.shouldStop == true || mShouldStopFetching) return true
+        return isDestroyed || isFinishing
+    }
+
+    private fun reconcileDirectories(
+        dirs: ArrayList<Directory>,
+        scanConfig: FolderScanConfig,
+        fetcher: MediaFetcher,
+        initialPlaceholderVisible: Boolean
+    ) {
+        var isPlaceholderVisible = initialPlaceholderVisible
+        val dirPathsToRemove = ArrayList<String>()
         val fastPathUpdated = checkFastPathFolderChanges(dirs, scanConfig, dirPathsToRemove) {
             if (isPlaceholderVisible) {
                 isPlaceholderVisible = false
-                runOnUiThread {
-                    binding.directoriesEmptyPlaceholder.beGone()
-                    binding.directoriesEmptyPlaceholder2.beGone()
-                    binding.directoriesFastscroller.beVisible()
-                }
+                hidePlaceholders()
             }
         }
         if (fastPathUpdated) {
@@ -1489,86 +1501,62 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
             }
         }
 
-        val summary = mLastMediaFetcher!!.getMediaStoreFolderSummary()
-        var adapterNeedsUpdate = false
+        val summary = fetcher.getMediaStoreFolderSummary()
+        if (isScanInterrupted(fetcher)) {
+            return
+        }
 
+        val foldersToRescan = ArrayList<Directory>()
         for (directory in dirs) {
-            if (mShouldStopFetching || isDestroyed || isFinishing) {
-                return
-            }
+            if (isScanInterrupted(fetcher)) return
             reconcileCachedDirectory(directory, summary, dirPathsToRemove, foldersToRescan)
         }
 
-        for (directory in foldersToRescan) {
-            if (mShouldStopFetching || isDestroyed || isFinishing) {
-                return
-            }
-            val changed = rescanDirectory(directory, scanConfig, dirPathsToRemove)
-            if (changed) {
-                adapterNeedsUpdate = true
-            }
-        }
+        var adapterNeedsUpdate = rescanChangedFolders(foldersToRescan, scanConfig, dirPathsToRemove, fetcher)
+        if (isScanInterrupted(fetcher)) return
 
-        if (dirPathsToRemove.isNotEmpty()) {
-            val dirsToRemove = dirs.filter { dirPathsToRemove.contains(it.path) }
-            dirsToRemove.forEach {
-                directoryDB.deleteDirPath(it.path)
-            }
-            dirs.removeAll(dirsToRemove)
+        if (removeDeletedDirectories(dirs, dirPathsToRemove)) {
             adapterNeedsUpdate = true
         }
 
         val knownFolderPaths = dirs.mapTo(HashSet()) { it.path.getDistinctPath() }
-        val newFolderNormPaths = summary.folderCounts.keys.filter { it !in knownFolderPaths }
-        val shouldShowHidden = config.shouldShowHidden
-        val excludedPaths = if (config.temporarilyShowExcluded) {
-            HashSet()
-        } else {
-            config.excludedFolders
-        }
-        val folderNoMediaStatuses = HashMap<String, Boolean>()
-        noMediaFolders.forEach { folder ->
-            folderNoMediaStatuses["$folder/$NOMEDIA"] = true
-        }
-
-        for (normPath in newFolderNormPaths) {
-            if (mShouldStopFetching || isDestroyed || isFinishing) {
-                return
+        val onFolderFound = {
+            if (isPlaceholderVisible) {
+                isPlaceholderVisible = false
+                hidePlaceholders()
             }
-
-            val folderPath = summary.folderCanonicalPaths[normPath]
-            if (folderPath != null) {
-                val isVisible = folderPath.shouldFolderBeVisible(
-                    excludedPaths = excludedPaths,
-                    includedPaths = includedFolders,
-                    showHidden = shouldShowHidden,
-                    folderNoMediaStatuses = folderNoMediaStatuses
-                ) { path, hasNoMedia ->
-                    folderNoMediaStatuses[path] = hasNoMedia
-                }
-
-                if (isVisible) {
-                    if (isPlaceholderVisible) {
-                        isPlaceholderVisible = false
-                        runOnUiThread {
-                            binding.directoriesEmptyPlaceholder.beGone()
-                            binding.directoriesEmptyPlaceholder2.beGone()
-                            binding.directoriesFastscroller.beVisible()
-                        }
-                    }
-
-                    val added = scanAndAddNewFolder(folderPath, dirs, scanConfig)
-                    if (added) {
-                        adapterNeedsUpdate = true
-                    }
-                }
-            }
+        }
+        val mediaStoreAdded = scanMediaStoreNewFolders(
+            summary, dirs, scanConfig, knownFolderPaths, fetcher, onFolderFound
+        )
+        val diskFoldersAdded = scanUncachedDiskFolders(
+            dirs, scanConfig, knownFolderPaths, fetcher, onFolderFound
+        )
+        if (mediaStoreAdded || diskFoldersAdded) {
+            adapterNeedsUpdate = true
         }
 
         if (adapterNeedsUpdate) {
             setupAdapter(dirs)
         }
 
+        finalizeDirectoryScan(dirs)
+    }
+
+    private fun removeDeletedDirectories(
+        dirs: ArrayList<Directory>,
+        dirPathsToRemove: ArrayList<String>
+    ): Boolean {
+        if (dirPathsToRemove.isEmpty()) return false
+        val dirsToRemove = dirs.filter { dirPathsToRemove.contains(it.path) }
+        dirsToRemove.forEach {
+            directoryDB.deleteDirPath(it.path)
+        }
+        dirs.removeAll(dirsToRemove)
+        return true
+    }
+
+    private fun finalizeDirectoryScan(dirs: ArrayList<Directory>) {
         mLoadedInitialPhotos = true
         config.lastScanMaxMediaId = maxOf(config.lastScanMaxMediaId, getLatestMediaId())
         config.lastScanTimestamp = System.currentTimeMillis() / 1000
@@ -1581,13 +1569,13 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
             checkPlaceholderVisibility(dirs)
         }
 
-
         checkInvalidDirectories(dirs)
         if (mDirs.size > 50) {
             excludeSpamFolders()
         }
 
         val everShownFolders = config.everShownFolders.toMutableSet() as HashSet<String>
+        val excludedPaths = if (config.temporarilyShowExcluded) HashSet() else config.excludedFolders
         dirs.filter { dir ->
             !excludedPaths.any { dir.path.startsWith(it) }
         }.mapTo(everShownFolders) { it.path }
@@ -1611,6 +1599,72 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
         }
 
         mDirs = dirs.clone() as ArrayList<Directory>
+    }
+
+    private fun hidePlaceholders() {
+        runOnUiThread {
+            binding.directoriesEmptyPlaceholder.beGone()
+            binding.directoriesEmptyPlaceholder2.beGone()
+            binding.directoriesFastscroller.beVisible()
+        }
+    }
+
+    private fun rescanChangedFolders(
+        foldersToRescan: ArrayList<Directory>,
+        scanConfig: FolderScanConfig,
+        dirPathsToRemove: ArrayList<String>,
+        fetcher: MediaFetcher
+    ): Boolean {
+        var adapterNeedsUpdate = false
+        for (directory in foldersToRescan) {
+            if (isScanInterrupted(fetcher)) break
+            val changed = rescanDirectory(directory, scanConfig, dirPathsToRemove)
+            if (changed) {
+                adapterNeedsUpdate = true
+            }
+        }
+        return adapterNeedsUpdate
+    }
+
+    private fun scanMediaStoreNewFolders(
+        summary: MediaStoreFolderSummary,
+        dirs: ArrayList<Directory>,
+        scanConfig: FolderScanConfig,
+        knownFolderPaths: HashSet<String>,
+        fetcher: MediaFetcher,
+        onFolderFound: () -> Unit
+    ): Boolean {
+        val newFolderNormPaths = summary.folderCounts.keys.filter { it !in knownFolderPaths }
+        val shouldShowHidden = config.shouldShowHidden
+        val excludedPaths = if (config.temporarilyShowExcluded) HashSet() else config.excludedFolders
+        val folderNoMediaStatuses = HashMap<String, Boolean>()
+        scanConfig.noMediaFolders.forEach { folder ->
+            folderNoMediaStatuses["$folder/$NOMEDIA"] = true
+        }
+
+        var anyAdded = false
+        for (normPath in newFolderNormPaths) {
+            if (isScanInterrupted(fetcher)) break
+
+            val folderPath = summary.folderCanonicalPaths[normPath]
+            if (folderPath != null) {
+                val isVisible = folderPath.shouldFolderBeVisible(
+                    excludedPaths = excludedPaths,
+                    includedPaths = scanConfig.includedFolders,
+                    showHidden = shouldShowHidden,
+                    folderNoMediaStatuses = folderNoMediaStatuses
+                ) { path, hasNoMedia ->
+                    folderNoMediaStatuses[path] = hasNoMedia
+                }
+
+                if (isVisible && scanAndAddNewFolder(folderPath, dirs, scanConfig)) {
+                    knownFolderPaths.add(normPath)
+                    onFolderFound()
+                    anyAdded = true
+                }
+            }
+        }
+        return anyAdded
     }
 
     private fun setAsDefaultFolder() {
@@ -1893,6 +1947,124 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
         config.lastScanMaxMediaId = maxOf(config.lastScanMaxMediaId, fastMaxId)
         config.lastScanTimestamp = System.currentTimeMillis() / 1000
         return fastPathUpdated
+    }
+
+    private data class DiskScanContext(
+        val dirs: ArrayList<Directory>,
+        val scanConfig: FolderScanConfig,
+        val knownFolderPaths: HashSet<String>,
+        val excludedPaths: MutableSet<String>,
+        val folderNoMediaStatuses: HashMap<String, Boolean>,
+        val shouldShowHidden: Boolean,
+        val visited: HashSet<String>,
+        val fetcher: MediaFetcher,
+        val onFolderFound: () -> Unit
+    )
+
+    private fun tryAddDiskFolder(file: File, context: DiskScanContext): Boolean {
+        val folderPath = file.absolutePath
+        val norm = folderPath.getDistinctPath()
+        if (context.knownFolderPaths.contains(norm)) {
+            return false
+        }
+
+        val isVisible = folderPath.shouldFolderBeVisible(
+            excludedPaths = context.excludedPaths,
+            includedPaths = context.scanConfig.includedFolders,
+            showHidden = context.shouldShowHidden,
+            folderNoMediaStatuses = context.folderNoMediaStatuses
+        ) { path, hasNoMedia ->
+            context.folderNoMediaStatuses[path] = hasNoMedia
+        }
+
+        if (isVisible && scanAndAddNewFolder(folderPath, context.dirs, context.scanConfig)) {
+            context.knownFolderPaths.add(norm)
+            context.onFolderFound()
+            ensureBackgroundThread {
+                scanPathRecursively(folderPath)
+            }
+            return true
+        }
+        return false
+    }
+
+    private fun scanDiskParent(
+        parentPath: String,
+        depth: Int,
+        context: DiskScanContext
+    ): Boolean {
+        if (depth > 2 || isScanInterrupted(context.fetcher)) {
+            return false
+        }
+        if (!context.visited.add(parentPath.lowercase())) {
+            return false
+        }
+        val parentFile = File(parentPath)
+        val subFiles = parentFile.listFiles() ?: return false
+        var anyAdded = false
+        for (file in subFiles) {
+            if (isScanInterrupted(context.fetcher)) break
+            if (file.isDirectory && !file.name.startsWith(".")) {
+                if (tryAddDiskFolder(file, context)) {
+                    anyAdded = true
+                }
+
+                if (depth < 2 && scanDiskParent(file.absolutePath, depth + 1, context)) {
+                    anyAdded = true
+                }
+            }
+        }
+        return anyAdded
+    }
+
+    private fun scanUncachedDiskFolders(
+        dirs: ArrayList<Directory>,
+        scanConfig: FolderScanConfig,
+        knownFolderPaths: HashSet<String>,
+        fetcher: MediaFetcher,
+        onFolderFound: () -> Unit
+    ): Boolean {
+        val candidateParents = HashSet<String>()
+        dirs.forEach { candidateParents.add(it.path.getParentPath()) }
+        candidateParents.addAll(scanConfig.includedFolders)
+        candidateParents.add(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM).toString())
+        candidateParents.add(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES).toString())
+        candidateParents.add(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).toString())
+        candidateParents.add(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES).toString())
+        candidateParents.remove("")
+        candidateParents.remove(internalStoragePath)
+        candidateParents.remove("/storage/emulated")
+
+        val excludedPaths: MutableSet<String> = if (config.temporarilyShowExcluded) {
+            HashSet()
+        } else {
+            config.excludedFolders
+        }
+        val folderNoMediaStatuses = HashMap<String, Boolean>()
+        scanConfig.noMediaFolders.forEach { folder ->
+            folderNoMediaStatuses["$folder/$NOMEDIA"] = true
+        }
+
+        val context = DiskScanContext(
+            dirs = dirs,
+            scanConfig = scanConfig,
+            knownFolderPaths = knownFolderPaths,
+            excludedPaths = excludedPaths,
+            folderNoMediaStatuses = folderNoMediaStatuses,
+            shouldShowHidden = config.shouldShowHidden,
+            visited = HashSet(),
+            fetcher = fetcher,
+            onFolderFound = onFolderFound
+        )
+
+        var anyAdded = false
+        for (parent in candidateParents) {
+            if (isScanInterrupted(fetcher)) break
+            if (scanDiskParent(parent, 1, context)) {
+                anyAdded = true
+            }
+        }
+        return anyAdded
     }
 
 
