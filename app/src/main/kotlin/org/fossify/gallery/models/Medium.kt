@@ -34,6 +34,14 @@ data class Medium(
 
     companion object {
         private const val serialVersionUID = -6553149366975655L
+
+        @Volatile private var lastDailyStart = -1L
+        @Volatile private var lastDailyEnd = -1L
+        @Volatile private var lastDailyResult = ""
+
+        @Volatile private var lastMonthlyStart = -1L
+        @Volatile private var lastMonthlyEnd = -1L
+        @Volatile private var lastMonthlyResult = ""
     }
 
     fun isWebP() = name.isWebP()
@@ -82,20 +90,40 @@ data class Medium(
 
     fun getIsInRecycleBin() = deletedTS != 0L
 
+    @Synchronized
     private fun getDayStartTS(ts: Long, resetDays: Boolean): String {
+        val start = if (!resetDays) lastDailyStart else lastMonthlyStart
+        val end = if (!resetDays) lastDailyEnd else lastMonthlyEnd
+        val cached = if (!resetDays) lastDailyResult else lastMonthlyResult
+
+        if (ts in start until end && cached.isNotEmpty()) {
+            return cached
+        }
+
         val calendar = Calendar.getInstance(Locale.ENGLISH).apply {
             timeInMillis = ts
             set(Calendar.HOUR_OF_DAY, 0)
             set(Calendar.MINUTE, 0)
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
-
             if (resetDays) {
                 set(Calendar.DAY_OF_MONTH, 1)
             }
         }
-
-        return calendar.timeInMillis.toString()
+        val newStart = calendar.timeInMillis
+        val res = newStart.toString()
+        if (!resetDays) {
+            calendar.add(Calendar.DAY_OF_YEAR, 1)
+            lastDailyStart = newStart
+            lastDailyEnd = calendar.timeInMillis
+            lastDailyResult = res
+        } else {
+            calendar.add(Calendar.MONTH, 1)
+            lastMonthlyStart = newStart
+            lastMonthlyEnd = calendar.timeInMillis
+            lastMonthlyResult = res
+        }
+        return res
     }
 
     fun getSignature(): String {

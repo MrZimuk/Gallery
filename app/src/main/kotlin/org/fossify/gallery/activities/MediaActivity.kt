@@ -4,6 +4,7 @@ import android.app.WallpaperManager
 import android.content.Intent
 import android.graphics.Bitmap
 import android.os.Bundle
+import android.util.Log
 import android.os.Handler
 import android.view.ViewGroup
 import android.widget.RelativeLayout
@@ -248,6 +249,15 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
         binding.mediaEmptyTextPlaceholder.setTextColor(getProperTextColor())
         binding.mediaEmptyTextPlaceholder2.setTextColor(getProperPrimaryColor())
         binding.mediaEmptyTextPlaceholder2.bringToFront()
+
+        if (mWasFullscreenViewOpen) {
+            mWasFullscreenViewOpen = false
+            if (mMedia.isNotEmpty()) {
+                getMediaAdapter()?.updateMedia(mMedia)
+                checkLastMediaChanged()
+                return
+            }
+        }
 
         // do not refresh Random sorted files after opening a fullscreen image and going Back
         val isRandomSorting = config.getFolderSorting(mPath) and SORT_BY_RANDOM != 0
@@ -666,6 +676,7 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
                 mIsGetVideoIntent && !mIsGetImageIntent,
                 mIsGetImageIntent && !mIsGetVideoIntent
             ) {
+                val shouldStartAsync = !mShowAll || it.isEmpty() || binding.mediaRefreshLayout.isRefreshing
                 if (it.isEmpty()) {
                     runOnUiThread {
                         binding.mediaRefreshLayout.isRefreshing = true
@@ -673,7 +684,12 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
                 } else {
                     gotMedia(it, true)
                 }
-                startAsyncTask()
+
+                if (shouldStartAsync) {
+                    startAsyncTask()
+                } else {
+                    mIsGettingMedia = false
+                }
             }
         }
 
@@ -696,7 +712,7 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
                     gotMedia(newMedia, false)
 
                     // remove cached files that are no longer valid for whatever reason
-                    val newPaths = newMedia.mapNotNull { it as? Medium }.map { it.path }
+                    val newPaths = newMedia.mapNotNullTo(HashSet()) { (it as? Medium)?.path }
                     oldMedia
                         .mapNotNull { it as? Medium }
                         .filter { !newPaths.contains(it.path) }
@@ -1003,6 +1019,7 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
     }
 
     private fun gotMedia(media: ArrayList<ThumbnailItem>, isFromCache: Boolean) {
+        Log.e("GALLERY_BENCH", "gotMedia: ${media.size} items, isFromCache=$isFromCache")
         mIsGettingMedia = false
         checkLastMediaChanged()
         mMedia = media

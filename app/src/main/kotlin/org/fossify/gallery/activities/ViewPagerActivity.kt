@@ -1237,6 +1237,7 @@ class ViewPagerActivity : BaseViewerActivity(), ViewPager.OnPageChangeListener, 
                     if (it) {
                         tryDeleteFileDirItem(fileDirItem, false, false) {
                             mIgnoredPaths.remove(fileDirItem.path)
+                            MediaActivity.mMedia.removeAll { (it as? Medium)?.path == fileDirItem.path }
                             if (media.isEmpty()) {
                                 deleteDirectoryIfEmpty()
                                 finish()
@@ -1272,6 +1273,7 @@ class ViewPagerActivity : BaseViewerActivity(), ViewPager.OnPageChangeListener, 
 
             tryDeleteFileDirItem(fileDirItem, false, true) {
                 mIgnoredPaths.remove(fileDirItem.path)
+                MediaActivity.mMedia.removeAll { (it as? Medium)?.path == fileDirItem.path }
                 if (media.isEmpty()) {
                     deleteDirectoryIfEmpty()
                     finish()

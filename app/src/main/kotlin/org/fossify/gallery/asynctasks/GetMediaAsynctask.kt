@@ -2,6 +2,7 @@ package org.fossify.gallery.asynctasks
 
 import android.content.Context
 import android.os.AsyncTask
+import android.util.Log
 import org.fossify.commons.helpers.FAVORITES
 import org.fossify.commons.helpers.SORT_BY_DATE_MODIFIED
 import org.fossify.commons.helpers.SORT_BY_DATE_TAKEN
@@ -20,6 +21,7 @@ class GetMediaAsynctask(
     private val mediaFetcher = MediaFetcher(context)
 
     override fun doInBackground(vararg params: Void): ArrayList<ThumbnailItem> {
+        val startTime = System.currentTimeMillis()
         val pathToUse = if (showAll) SHOW_ALL else mPath
         val folderGrouping = context.config.getFolderGrouping(pathToUse)
         val folderSorting = context.config.getFolderSorting(pathToUse)
@@ -38,12 +40,13 @@ class GetMediaAsynctask(
         val dateTakens = if (getProperDateTaken) mediaFetcher.getDateTakens() else HashMap()
 
         val media = if (showAll) {
-            val foldersToScan = mediaFetcher.getFoldersToScan().filter { it != RECYCLE_BIN && it != FAVORITES && !context.config.isFolderProtected(it) }
+            val foldersToScan = mediaFetcher.getFoldersToScan()
+                .filter { it != RECYCLE_BIN && it != FAVORITES && !context.config.isFolderProtected(it) }
             val media = ArrayList<Medium>()
             foldersToScan.forEach {
                 val newMedia = mediaFetcher.getFilesFrom(
                     it, isPickImage, isPickVideo, getProperDateTaken, getProperLastModified, getProperFileSize,
-                    favoritePaths, getVideoDurations, lastModifieds, dateTakens.clone() as HashMap<String, Long>, null
+                    favoritePaths, getVideoDurations, lastModifieds, dateTakens, null
                 )
                 media.addAll(newMedia)
             }
@@ -57,7 +60,9 @@ class GetMediaAsynctask(
             )
         }
 
-        return mediaFetcher.groupMedia(media, pathToUse)
+        val res = mediaFetcher.groupMedia(media, pathToUse)
+        Log.e("GALLERY_BENCH", "GetMediaAsynctask showAll=$showAll took ${System.currentTimeMillis() - startTime}ms")
+        return res
     }
 
     override fun onPostExecute(media: ArrayList<ThumbnailItem>) {
