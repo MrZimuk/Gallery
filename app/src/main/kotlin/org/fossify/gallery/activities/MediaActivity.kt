@@ -133,6 +133,7 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
     private var mLastSearchedText = ""
     private var mLatestMediaId = 0L
     private var mLatestMediaDateId = 0L
+    private var mLatestFolderModified = 0L
     private var mLastMediaHandler = Handler()
     private var mTempShowHiddenHandler = Handler()
     private var mCurrAsyncTask: GetMediaAsynctask? = null
@@ -602,9 +603,14 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
         mLastMediaHandler.removeCallbacksAndMessages(null)
         mLastMediaHandler.postDelayed({
             ensureBackgroundThread {
+                val folderModified = if (mPath.isNotEmpty()) File(mPath).lastModified() else 0L
                 val mediaId = getLatestMediaId()
                 val mediaDateId = getLatestMediaByDateId()
-                if (mLatestMediaId != mediaId || mLatestMediaDateId != mediaDateId) {
+                if (mLatestFolderModified != folderModified ||
+                    mLatestMediaId != mediaId ||
+                    mLatestMediaDateId != mediaDateId
+                ) {
+                    mLatestFolderModified = folderModified
                     mLatestMediaId = mediaId
                     mLatestMediaDateId = mediaDateId
                     runOnUiThread {
@@ -1092,6 +1098,7 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
 
         mLatestMediaId = getLatestMediaId()
         mLatestMediaDateId = getLatestMediaByDateId()
+        mLatestFolderModified = if (mPath.isNotEmpty()) File(mPath).lastModified() else 0L
 
         if (mShowAll && isFromCache) {
             ensureBackgroundThread {

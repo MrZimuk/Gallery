@@ -31,6 +31,7 @@ import org.fossify.commons.extensions.getFilenameFromPath
 import org.fossify.commons.extensions.getParentPath
 import org.fossify.commons.extensions.getLatestMediaByDateId
 import org.fossify.commons.extensions.getLatestMediaId
+import org.fossify.gallery.extensions.getMediaRootsLastModifiedHash
 import org.fossify.commons.extensions.getMimeType
 import org.fossify.commons.extensions.getProperBackgroundColor
 import org.fossify.commons.extensions.getProperPrimaryColor
@@ -182,6 +183,7 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
     private var mWasMediaManagementPromptShown = false
     private var mLatestMediaId = 0L
     private var mLatestMediaDateId = 0L
+    private var mLatestFsHash = 0L
 
     // used at "Group direct subfolders" for navigation
     private var mCurrentPathPrefix = ""
@@ -1860,6 +1862,7 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
             if (hasPermission(PERMISSION_READ_STORAGE)) {
                 mLatestMediaId = getLatestMediaId()
                 mLatestMediaDateId = getLatestMediaByDateId()
+                mLatestFsHash = getMediaRootsLastModifiedHash()
                 if (config.lastScanMaxMediaId == 0L && mLatestMediaId > 0L) {
                     config.lastScanMaxMediaId = mLatestMediaId
                     config.lastScanTimestamp = System.currentTimeMillis() / 1000
@@ -2075,9 +2078,14 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
             ensureBackgroundThread {
                 val mediaId = getLatestMediaId()
                 val mediaDateId = getLatestMediaByDateId()
-                if (mLatestMediaId != mediaId || mLatestMediaDateId != mediaDateId) {
+                val fsHash = getMediaRootsLastModifiedHash()
+                if (mLatestMediaId != mediaId ||
+                    mLatestMediaDateId != mediaDateId ||
+                    mLatestFsHash != fsHash
+                ) {
                     mLatestMediaId = mediaId
                     mLatestMediaDateId = mediaDateId
+                    mLatestFsHash = fsHash
                     runOnUiThread {
                         getDirectories()
                     }

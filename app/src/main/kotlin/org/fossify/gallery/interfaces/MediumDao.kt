@@ -41,6 +41,9 @@ interface MediumDao {
     @Delete
     fun deleteMedia(vararg medium: Medium)
 
+    @Delete
+    fun deleteMediaList(media: List<Medium>)
+
     @Query("DELETE FROM media WHERE full_path = :path COLLATE NOCASE")
     fun deleteMediumPath(path: String)
 

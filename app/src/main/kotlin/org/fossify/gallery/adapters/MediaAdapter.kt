@@ -16,6 +16,10 @@ import com.qtalk.recyclerviewfastscroller.RecyclerViewFastScroller
 import org.fossify.commons.activities.BaseSimpleActivity
 import org.fossify.commons.adapters.MyRecyclerViewAdapter
 import org.fossify.gallery.dialogs.PropertiesDialog
+import org.fossify.gallery.helpers.ShowAllCache
+import org.fossify.gallery.extensions.deleteDBPath
+import org.fossify.commons.helpers.ensureBackgroundThread
+import java.io.File
 import org.fossify.commons.dialogs.RenameDialog
 import org.fossify.commons.dialogs.RenameItemDialog
 import org.fossify.commons.extensions.applyColorFilter
@@ -749,8 +753,29 @@ class MediaAdapter(
                 signature = medium.getKey(),
                 skipMemoryCacheAtPaths = rotatedImagePaths,
                 onError = {
-                    mediumThumbnail.scaleType = ImageView.ScaleType.CENTER
-                    mediumThumbnail.setImageDrawable(AppCompatResources.getDrawable(activity, R.drawable.ic_vector_warning_colored))
+                    val file = File(medium.path)
+                    if (!file.exists()) {
+                        ensureBackgroundThread {
+                            try {
+                                activity.deleteDBPath(medium.path)
+                                ShowAllCache.removeMedia(medium.path)
+                            } catch (ignored: Exception) {
+                            }
+                        }
+                        (activity as? Activity)?.runOnUiThread {
+                            MediaActivity.mMedia.removeAll { (it as? Medium)?.path == medium.path }
+                            val index = media.indexOfFirst { (it as? Medium)?.path == medium.path }
+                            if (index != -1) {
+                                media.removeAt(index)
+                                notifyItemRemoved(index)
+                            }
+                        }
+                    } else {
+                        mediumThumbnail.scaleType = ImageView.ScaleType.CENTER
+                        mediumThumbnail.setImageDrawable(
+                            AppCompatResources.getDrawable(activity, R.drawable.ic_vector_warning_colored)
+                        )
+                    }
                 }
             )
 

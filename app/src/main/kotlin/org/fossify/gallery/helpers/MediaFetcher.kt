@@ -274,6 +274,19 @@ class MediaFetcher(val context: Context) {
             folders.addAll(summary.folderCanonicalPaths.values)
 
             val config = context.config
+            folders.addAll(config.includedFolders)
+
+            val rootPaths = listOf(
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
+            )
+            for (root in rootPaths) {
+                root?.listFiles()?.filter { it.isDirectory && !it.name.startsWith(".") }?.forEach {
+                    folders.add(it.absolutePath)
+                }
+            }
             val shouldShowHidden = config.shouldShowHidden
             val excludedPaths = if (config.temporarilyShowExcluded) {
                 HashSet()

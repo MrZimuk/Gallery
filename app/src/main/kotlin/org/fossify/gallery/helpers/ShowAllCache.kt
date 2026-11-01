@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import org.fossify.commons.extensions.getLatestMediaByDateId
 import org.fossify.commons.extensions.getLatestMediaId
+import org.fossify.gallery.extensions.getMediaRootsLastModifiedHash
 import org.fossify.gallery.extensions.mediaDB
 import org.fossify.gallery.models.Medium
 import org.fossify.gallery.models.ThumbnailItem
@@ -16,6 +17,7 @@ object ShowAllCache {
     private var latestMediaId: Long = 0L
     private var latestMediaDateId: Long = 0L
     private var mediaCount: Long = 0L
+    private var latestFsHash: Long = 0L
 
     fun hasValidCache(filterMedia: Int, sorting: Int, grouping: Int): Boolean {
         val items = cachedMedia
@@ -38,7 +40,8 @@ object ShowAllCache {
         grouping: Int,
         mediaId: Long,
         mediaDateId: Long,
-        count: Long
+        count: Long,
+        fsHash: Long = 0L
     ) {
         cachedMedia = ArrayList(items)
         cachedFilterMedia = filterMedia
@@ -47,6 +50,7 @@ object ShowAllCache {
         latestMediaId = mediaId
         latestMediaDateId = mediaDateId
         mediaCount = count
+        latestFsHash = fsHash
         Log.e("GALLERY_BENCH", "ShowAllCache: cached ${items.size} items (count=$count, mediaId=$mediaId)")
     }
 
@@ -56,14 +60,17 @@ object ShowAllCache {
             val currentMediaId = context.getLatestMediaId()
             val currentMediaDateId = context.getLatestMediaByDateId()
             val currentCount = context.mediaDB.getMediaCount()
+            val currentFsHash = context.getMediaRootsLastModifiedHash()
             val changed = currentMediaId != latestMediaId ||
                 currentMediaDateId != latestMediaDateId ||
-                currentCount != mediaCount
+                currentCount != mediaCount ||
+                (latestFsHash != 0L && currentFsHash != latestFsHash)
             if (changed) {
                 Log.e(
                     "GALLERY_BENCH",
                     "ShowAllCache: delta detected! mediaId: $latestMediaId->$currentMediaId, " +
-                        "dateId: $latestMediaDateId->$currentMediaDateId, count: $mediaCount->$currentCount"
+                        "dateId: $latestMediaDateId->$currentMediaDateId, count: $mediaCount->$currentCount, " +
+                        "fsHash: $latestFsHash->$currentFsHash"
                 )
             }
             onResult(changed)
@@ -97,5 +104,6 @@ object ShowAllCache {
         latestMediaId = 0L
         latestMediaDateId = 0L
         mediaCount = 0L
+        latestFsHash = 0L
     }
 }

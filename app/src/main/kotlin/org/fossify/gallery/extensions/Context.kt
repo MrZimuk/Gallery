@@ -1003,10 +1003,12 @@ private fun Context.getCachedShowAllMedia(
         grouping = grouping,
         mediaId = getLatestMediaId(),
         mediaDateId = getLatestMediaByDateId(),
-        count = mediaDB.getMediaCount()
+        count = mediaDB.getMediaCount(),
+        fsHash = getMediaRootsLastModifiedHash()
     )
 
     callback(grouped)
+    pruneDeadMediaFromShowAll(grouped)
 }
 
 fun Context.getCachedMedia(
@@ -1049,10 +1051,10 @@ fun Context.getCachedMedia(
                 foldersToScan.addAll(foldersToAdd)
             }
 
-            foldersToScan.forEach {
+            foldersToScan.forEach { folderPath ->
                 try {
-                    val currMedia = mediaDB.getMediaFromPath(it)
-                    media.addAll(currMedia)
+                    val currMedia = mediaDB.getMediaFromPath(folderPath)
+                    media.addAll(filterValidFolderMedia(folderPath, currMedia))
                 } catch (ignored: Exception) {
                 }
             }
@@ -1563,4 +1565,88 @@ fun Context.resolveUriScheme(
         "content" -> onContentUri(uri)
         else -> onUnknown()
     }
+}
+
+private const val HASH_INITIAL = 17L
+private const val HASH_MULTIPLIER = 31L
+
+private fun Context.pruneDeadMediaFromShowAll(grouped: List<ThumbnailItem>) {
+    ensureBackgroundThread {
+        try {
+            val parentFolders = grouped.filterIsInstance<Medium>().mapTo(HashSet()) { it.parentPath }
+            val deadMedia = ArrayList<Medium>()
+            for (parent in parentFolders) {
+                val pFile = File(parent)
+                if (pFile.exists() && pFile.isDirectory) {
+                    val names = pFile.list()?.toHashSet() ?: continue
+                    for (item in grouped) {
+                        if (item is Medium && item.parentPath == parent && item.name !in names) {
+                            deadMedia.add(item)
+                        }
+                    }
+                }
+            }
+            if (deadMedia.isNotEmpty()) {
+                mediaDB.deleteMediaList(deadMedia)
+                deadMedia.forEach { ShowAllCache.removeMedia(it.path) }
+            }
+        } catch (ignored: Exception) {
+        }
+    }
+}
+
+private fun Context.filterValidFolderMedia(folderPath: String, dbMedia: List<Medium>): ArrayList<Medium> {
+    val dirFile = File(folderPath)
+    if (!dirFile.exists() || !dirFile.isDirectory) {
+        return ArrayList(dbMedia)
+    }
+    val names = dirFile.list()?.toHashSet() ?: return ArrayList(dbMedia)
+    val valid = ArrayList<Medium>()
+    val dead = ArrayList<Medium>()
+    for (m in dbMedia) {
+        if (m.name in names) valid.add(m) else dead.add(m)
+    }
+    if (dead.isNotEmpty()) {
+        ensureBackgroundThread {
+            try {
+                mediaDB.deleteMediaList(dead)
+                dead.forEach { ShowAllCache.removeMedia(it.path) }
+            } catch (ignored: Exception) {
+            }
+        }
+    }
+    return valid
+}
+
+private fun collectDirsToHash(rootDirs: List<File>): List<File> {
+    val result = ArrayList<File>()
+    for (dir in rootDirs) {
+        if (dir.exists() && dir.isDirectory) {
+            result.add(dir)
+            dir.listFiles()?.filter { it.isDirectory && !it.name.startsWith(".") }?.let {
+                result.addAll(it)
+            }
+        }
+    }
+    return result
+}
+
+fun Context.getMediaRootsLastModifiedHash(): Long {
+    var hash = HASH_INITIAL
+    try {
+        val rootDirs = arrayListOf(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
+        )
+        config.includedFolders.forEach { rootDirs.add(File(it)) }
+
+        val allDirs = collectDirsToHash(rootDirs.filterNotNull())
+        for (dir in allDirs) {
+            hash = HASH_MULTIPLIER * hash + dir.lastModified()
+        }
+    } catch (ignored: Exception) {
+    }
+    return hash
 }

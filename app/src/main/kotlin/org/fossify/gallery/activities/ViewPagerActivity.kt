@@ -420,6 +420,18 @@ class ViewPagerActivity : BaseViewerActivity(), ViewPager.OnPageChangeListener, 
         outState.putString(SAVED_PATH, getCurrentPath())
     }
 
+
+    private fun handleMissingMediaFile() {
+        ensureBackgroundThread {
+            try {
+                deleteDBPath(mPath)
+                ShowAllCache.removeMedia(mPath)
+                MediaActivity.mMedia.removeAll { (it as? Medium)?.path == mPath }
+            } catch (ignored: Exception) {
+            }
+        }
+        finish()
+    }
     private fun initViewPager(savedPath: String) {
         val uri = intent.data
         if (uri != null) {
@@ -459,7 +471,7 @@ class ViewPagerActivity : BaseViewerActivity(), ViewPager.OnPageChangeListener, 
         }
 
         if (!getDoesFilePathExist(mPath) && getPortraitPath() == "") {
-            finish()
+            handleMissingMediaFile()
             return
         }
 
