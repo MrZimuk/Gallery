@@ -14,6 +14,7 @@ import android.media.AudioManager
 import android.net.Uri
 import android.util.Log
 import android.os.Process
+import android.os.Environment
 import android.provider.MediaStore.Files
 import android.provider.MediaStore.Images
 import android.widget.ImageView
@@ -1634,7 +1635,7 @@ private fun collectDirsToHash(rootDirs: List<File>): List<File> {
 fun Context.getMediaRootsLastModifiedHash(): Long {
     var hash = HASH_INITIAL
     try {
-        val rootDirs = arrayListOf(
+        val rootDirs = arrayListOf<File?>(
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),

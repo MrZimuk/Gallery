@@ -17,6 +17,7 @@ import org.fossify.commons.activities.BaseSimpleActivity
 import org.fossify.commons.adapters.MyRecyclerViewAdapter
 import org.fossify.gallery.dialogs.PropertiesDialog
 import org.fossify.gallery.helpers.ShowAllCache
+import org.fossify.gallery.activities.MediaActivity
 import org.fossify.gallery.extensions.deleteDBPath
 import org.fossify.commons.helpers.ensureBackgroundThread
 import java.io.File
@@ -762,9 +763,9 @@ class MediaAdapter(
                             } catch (ignored: Exception) {
                             }
                         }
-                        (activity as? Activity)?.runOnUiThread {
-                            MediaActivity.mMedia.removeAll { (it as? Medium)?.path == medium.path }
-                            val index = media.indexOfFirst { (it as? Medium)?.path == medium.path }
+                        activity.runOnUiThread {
+                            MediaActivity.mMedia.removeAll { item -> (item as? Medium)?.path == medium.path }
+                            val index = media.indexOfFirst { item -> (item as? Medium)?.path == medium.path }
                             if (index != -1) {
                                 media.removeAt(index)
                                 notifyItemRemoved(index)

@@ -103,6 +103,7 @@ import org.fossify.gallery.dialogs.DeleteWithRememberDialog
 import org.fossify.gallery.dialogs.SaveAsDialog
 import org.fossify.gallery.dialogs.SlideshowDialog
 import org.fossify.gallery.extensions.config
+import org.fossify.gallery.extensions.deleteDBPath
 import org.fossify.gallery.extensions.favoritesDB
 import org.fossify.gallery.extensions.fixDateTaken
 import org.fossify.gallery.extensions.getFavoritePaths
@@ -426,7 +427,7 @@ class ViewPagerActivity : BaseViewerActivity(), ViewPager.OnPageChangeListener, 
             try {
                 deleteDBPath(mPath)
                 ShowAllCache.removeMedia(mPath)
-                MediaActivity.mMedia.removeAll { (it as? Medium)?.path == mPath }
+                MediaActivity.mMedia.removeAll { item -> (item as? Medium)?.path == mPath }
             } catch (ignored: Exception) {
             }
         }
