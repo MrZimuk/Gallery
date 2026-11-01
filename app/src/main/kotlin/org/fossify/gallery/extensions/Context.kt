@@ -972,6 +972,8 @@ private fun Context.getCachedShowAllMedia(
         }
     }
 
+    syncDeltaMedia()
+
     val foldersToScan = mediaFetcher.getFoldersToScan()
     val allowedFolders = foldersToScan.filter { !config.isFolderProtected(it) }.toHashSet()
 
@@ -1619,17 +1621,59 @@ private fun Context.filterValidFolderMedia(folderPath: String, dbMedia: List<Med
     return valid
 }
 
+private const val HASH_DIR_MAX_DEPTH = 3
+private const val HASH_DIR_MAX_SUBDIRS = 100
+private const val DELTA_SAFETY_WINDOW_SEC = 60L
+
 private fun collectDirsToHash(rootDirs: List<File>): List<File> {
     val result = ArrayList<File>()
     for (dir in rootDirs) {
-        if (dir.exists() && dir.isDirectory) {
-            result.add(dir)
-            dir.listFiles()?.filter { it.isDirectory && !it.name.startsWith(".") }?.let {
-                result.addAll(it)
-            }
-        }
+        collectSubDirsToHash(dir, 1, HASH_DIR_MAX_DEPTH, result)
     }
     return result
+}
+
+private fun collectSubDirsToHash(dir: File, depth: Int, maxDepth: Int, result: ArrayList<File>) {
+    if (!dir.exists() || !dir.isDirectory || dir.name.startsWith(".")) return
+    result.add(dir)
+    if (depth >= maxDepth) return
+    val subFiles = dir.listFiles() ?: return
+    if (subFiles.size > HASH_DIR_MAX_SUBDIRS) return
+    for (file in subFiles) {
+        if (file.isDirectory && !file.name.startsWith(".")) {
+            collectSubDirsToHash(file, depth + 1, maxDepth, result)
+        }
+    }
+}
+
+fun Context.syncDeltaMedia(): Int {
+    var totalAdded = 0
+    try {
+        val fetcher = MediaFetcher(this)
+        val maxDbModifiedSec = ((mediaDB.getMaxLastModified() ?: 0L) / 1000L) - DELTA_SAFETY_WINDOW_SEC
+        val lastScanMaxId = config.lastScanMaxMediaId
+
+        val newMediaStoreMedia = fetcher.fetchNewMediaStoreMedia(lastScanMaxId, maxDbModifiedSec)
+        if (newMediaStoreMedia.isNotEmpty()) {
+            mediaDB.insertAll(newMediaStoreMedia)
+            val maxId = newMediaStoreMedia.maxOfOrNull { it.mediaStoreId } ?: 0L
+            if (maxId > config.lastScanMaxMediaId) {
+                config.lastScanMaxMediaId = maxId
+            }
+            totalAdded += newMediaStoreMedia.size
+            Log.e("GALLERY_BENCH", "syncDeltaMedia: inserted ${newMediaStoreMedia.size} from MediaStore")
+        }
+
+        val fsMedia = fetcher.syncActiveFilesystemFolders()
+        if (fsMedia.isNotEmpty()) {
+            mediaDB.insertAll(fsMedia)
+            totalAdded += fsMedia.size
+            Log.e("GALLERY_BENCH", "syncDeltaMedia: inserted ${fsMedia.size} from filesystem")
+        }
+    } catch (e: Exception) {
+        Log.e("GALLERY_BENCH", "syncDeltaMedia error: $e")
+    }
+    return totalAdded
 }
 
 fun Context.getMediaRootsLastModifiedHash(): Long {

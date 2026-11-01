@@ -6,6 +6,7 @@ import org.fossify.commons.extensions.getLatestMediaByDateId
 import org.fossify.commons.extensions.getLatestMediaId
 import org.fossify.gallery.extensions.getMediaRootsLastModifiedHash
 import org.fossify.gallery.extensions.mediaDB
+import org.fossify.gallery.extensions.syncDeltaMedia
 import org.fossify.gallery.models.Medium
 import org.fossify.gallery.models.ThumbnailItem
 
@@ -57,20 +58,21 @@ object ShowAllCache {
     @Suppress("TooGenericExceptionCaught")
     fun checkDelta(context: Context, onResult: (hasChanged: Boolean) -> Unit) {
         try {
+            val syncCount = context.syncDeltaMedia()
             val currentMediaId = context.getLatestMediaId()
             val currentMediaDateId = context.getLatestMediaByDateId()
             val currentCount = context.mediaDB.getMediaCount()
             val currentFsHash = context.getMediaRootsLastModifiedHash()
-            val changed = currentMediaId != latestMediaId ||
+            val changed = syncCount > 0 ||
+                currentMediaId != latestMediaId ||
                 currentMediaDateId != latestMediaDateId ||
                 currentCount != mediaCount ||
                 (latestFsHash != 0L && currentFsHash != latestFsHash)
             if (changed) {
                 Log.e(
                     "GALLERY_BENCH",
-                    "ShowAllCache: delta detected! mediaId: $latestMediaId->$currentMediaId, " +
-                        "dateId: $latestMediaDateId->$currentMediaDateId, count: $mediaCount->$currentCount, " +
-                        "fsHash: $latestFsHash->$currentFsHash"
+                    "ShowAllCache: delta detected! syncCount=$syncCount, mediaId: $latestMediaId->$currentMediaId, " +
+                        "count: $mediaCount->$currentCount, fsHash: $latestFsHash->$currentFsHash"
                 )
             }
             onResult(changed)

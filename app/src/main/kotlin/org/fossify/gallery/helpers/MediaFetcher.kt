@@ -15,6 +15,7 @@ import org.fossify.commons.extensions.*
 import org.fossify.commons.helpers.*
 import org.fossify.gallery.R
 import org.fossify.gallery.extensions.*
+import org.fossify.gallery.models.Directory
 import org.fossify.gallery.models.Medium
 import org.fossify.gallery.models.ThumbnailItem
 import org.fossify.gallery.models.ThumbnailSection
@@ -23,6 +24,8 @@ import java.util.Calendar
 import java.util.Locale
 private const val PARENT_CACHE_INITIAL_CAPACITY = 1024
 private const val TIMESTAMP_SAFETY_MARGIN_SECONDS = 60L
+private const val MAX_FOLDER_DEPTH = 3
+private const val MAX_SUBDIRS_TO_TRAVERSE = 100
 
 data class MediaStoreFolderSummary(
 
@@ -283,9 +286,7 @@ class MediaFetcher(val context: Context) {
                 Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
             )
             for (root in rootPaths) {
-                root?.listFiles()?.filter { it.isDirectory && !it.name.startsWith(".") }?.forEach {
-                    folders.add(it.absolutePath)
-                }
+                collectDiskFolders(root, MAX_FOLDER_DEPTH, folders)
             }
             val shouldShowHidden = config.shouldShowHidden
             val excludedPaths = if (config.temporarilyShowExcluded) {
@@ -977,5 +978,211 @@ class MediaFetcher(val context: Context) {
             else -> R.string.portraits
         }
         return context.getString(stringId)
+    }
+    private fun isValidDiskDir(dir: File?): Boolean {
+        return dir != null && dir.exists() && dir.isDirectory && !dir.name.startsWith(".")
+    }
+
+    private fun collectDiskFolders(root: File?, maxDepth: Int, target: MutableSet<String>) {
+        if (!isValidDiskDir(root)) return
+        val children = root?.listFiles() ?: return
+        for (child in children) {
+            if (!child.isDirectory || child.name.startsWith(".")) continue
+            target.add(child.absolutePath)
+            traverseSubFolders(child, maxDepth, target)
+        }
+    }
+
+    private fun traverseSubFolders(child: File, maxDepth: Int, target: MutableSet<String>) {
+        if (maxDepth <= 1) return
+        val subChildren = child.listFiles()
+        if (subChildren != null && subChildren.size <= MAX_SUBDIRS_TO_TRAVERSE) {
+            collectDiskFolders(child, maxDepth - 1, target)
+        }
+    }
+
+    private fun getMediaTypeForPath(path: String, filterMedia: Int): Int? {
+        val type = when {
+            path.isImageFast() -> TYPE_IMAGES
+            path.isVideoFast() -> TYPE_VIDEOS
+            path.isGif() -> TYPE_GIFS
+            path.isRawFast() -> TYPE_RAWS
+            path.isSvg() -> TYPE_SVGS
+            else -> return null
+        }
+        return if (filterMedia and type != 0) type else null
+    }
+
+    fun parseMediaCursorRow(
+        cursor: Cursor,
+        favoriteSet: Set<String>,
+        filterMedia: Int,
+        showHidden: Boolean
+    ): Medium? {
+        val path = cursor.getStringValue(Images.Media.DATA) ?: return null
+        val filename = cursor.getStringValue(Images.Media.DISPLAY_NAME) ?: return null
+        if (!showHidden && filename.startsWith('.')) return null
+
+        val size = cursor.getLongValue(Images.Media.SIZE)
+        if (size <= 0L) return null
+
+        val type = getMediaTypeForPath(path, filterMedia) ?: return null
+        return buildMediumFromCursor(cursor, path, filename, size, type, favoriteSet)
+    }
+
+    private fun buildMediumFromCursor(
+        cursor: Cursor,
+        path: String,
+        filename: String,
+        size: Long,
+        type: Int,
+        favoriteSet: Set<String>
+    ): Medium {
+        val mediaStoreId = cursor.getLongValue(Images.Media._ID)
+        val lastModified = cursor.getLongValue(Images.Media.DATE_MODIFIED) * 1000
+        val dateTakenRaw = cursor.getLongValue(Images.Media.DATE_TAKEN)
+        val dateTaken = if (dateTakenRaw != 0L) dateTakenRaw else lastModified
+
+        val durationIndex = cursor.getColumnIndex(MediaStore.MediaColumns.DURATION)
+        val rawDuration = if (durationIndex != -1) cursor.getInt(durationIndex) else 0
+        val videoDuration = Math.round(rawDuration / 1000.toDouble()).toInt()
+        val isFavorite = favoriteSet.contains(path)
+        return Medium(
+            null, filename, path, path.getParentPath(),
+            lastModified, dateTaken, size, type, videoDuration, isFavorite, 0L, mediaStoreId
+        )
+    }
+
+    fun fetchNewMediaStoreMedia(sinceId: Long, sinceDateModifiedSec: Long): ArrayList<Medium> {
+        val newMedia = ArrayList<Medium>()
+        val filterMedia = context.config.filterMedia
+        if (filterMedia == 0) return newMedia
+
+        val uri = Files.getContentUri("external")
+        val projection = arrayOf(
+            Images.Media._ID,
+            Images.Media.DISPLAY_NAME,
+            Images.Media.DATA,
+            Images.Media.DATE_MODIFIED,
+            Images.Media.DATE_TAKEN,
+            Images.Media.SIZE,
+            MediaStore.MediaColumns.DURATION
+        )
+
+        val idClause = if (sinceId > 0L) "${Images.Media._ID} > $sinceId" else null
+        val dateClause = if (sinceDateModifiedSec > 0L) {
+            "${Images.Media.DATE_MODIFIED} > $sinceDateModifiedSec"
+        } else {
+            null
+        }
+        val deltaClause = when {
+            idClause != null && dateClause != null -> "($idClause OR $dateClause)"
+            idClause != null -> idClause
+            dateClause != null -> dateClause
+            else -> null
+        }
+
+        val typeClause = "(media_type = 1 OR media_type = 3)"
+        val selection = if (deltaClause != null) "$deltaClause AND $typeClause" else typeClause
+        val showHidden = context.config.shouldShowHidden
+        val favoriteSet = context.getFavoritePaths().toHashSet()
+
+        try {
+            context.queryCursor(uri, projection, selection) { cursor ->
+                parseMediaCursorRow(cursor, favoriteSet, filterMedia, showHidden)?.let {
+                    newMedia.add(it)
+                }
+            }
+        } catch (ignored: Exception) {
+        }
+
+        return newMedia
+    }
+
+    fun syncActiveFilesystemFolders(): ArrayList<Medium> {
+        val updatedMedia = ArrayList<Medium>()
+        try {
+            val activeFolders = collectActiveFolders()
+            val knownDirs = context.directoryDB.getAll().associateBy { it.path }
+            val favoritePaths = context.getFavoritePaths()
+            val filterMedia = context.config.filterMedia
+            if (filterMedia == 0) return updatedMedia
+
+            for (folderPath in activeFolders) {
+                if (shouldStop) break
+                scanFolderIfChanged(folderPath, knownDirs[folderPath], favoritePaths, updatedMedia)
+            }
+        } catch (ignored: Exception) {
+        }
+        return updatedMedia
+    }
+
+    private fun collectActiveFolders(): LinkedHashSet<String> {
+        val activeFolders = LinkedHashSet<String>()
+        activeFolders.addAll(context.config.includedFolders)
+        val rootPaths = listOf(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
+        )
+        for (root in rootPaths) {
+            collectDiskFolders(root, MAX_FOLDER_DEPTH, activeFolders)
+        }
+        return activeFolders
+    }
+
+    private fun scanFolderIfChanged(
+        folderPath: String,
+        known: Directory?,
+        favoritePaths: ArrayList<String>,
+        updatedMedia: ArrayList<Medium>
+    ) {
+        val dirFile = File(folderPath)
+        if (!dirFile.exists() || !dirFile.isDirectory) return
+
+        val diskModified = dirFile.lastModified()
+        if (known != null && diskModified <= known.modified) return
+
+        val files = getFilesFrom(
+            curPath = folderPath,
+            isPickImage = false,
+            isPickVideo = false,
+            getProperDateTaken = false,
+            getProperLastModified = false,
+            getProperFileSize = false,
+            favoritePaths = favoritePaths,
+            getVideoDurations = false,
+            lastModifieds = HashMap(),
+            dateTakens = HashMap(),
+            android11Files = null
+        )
+        if (files.isNotEmpty()) {
+            updatedMedia.addAll(files)
+            recordScannedDirectory(folderPath, known, diskModified, files)
+        }
+    }
+
+    private fun recordScannedDirectory(
+        folderPath: String,
+        known: Directory?,
+        diskModified: Long,
+        files: List<Medium>
+    ) {
+        val isInternal = folderPath.startsWith(context.config.internalStoragePath)
+        val dir = Directory(
+            id = known?.id,
+            path = folderPath,
+            tmb = files.first().path,
+            name = folderPath.getFilenameFromPath(),
+            mediaCnt = files.size,
+            modified = diskModified,
+            taken = files.first().taken,
+            size = files.sumOf { it.size },
+            location = if (isInternal) LOCATION_INTERNAL else LOCATION_SD,
+            types = files.first().type,
+            sortValue = ""
+        )
+        context.directoryDB.insert(dir)
     }
 }

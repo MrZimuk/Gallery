@@ -79,6 +79,7 @@ import org.fossify.gallery.extensions.launchCamera
 import org.fossify.gallery.extensions.launchSettings
 import org.fossify.gallery.extensions.launchGesturePlayer
 import org.fossify.gallery.extensions.mediaDB
+import org.fossify.gallery.extensions.syncDeltaMedia
 import org.fossify.gallery.extensions.movePathsInRecycleBin
 import org.fossify.gallery.extensions.openPath
 import org.fossify.gallery.extensions.openRecycleBin
@@ -1194,7 +1195,17 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
     }
 
     override fun refreshItems() {
-        getMedia()
+        if (mShowAll) {
+            ShowAllCache.clear()
+            ensureBackgroundThread {
+                syncDeltaMedia()
+                runOnUiThread {
+                    getMedia()
+                }
+            }
+        } else {
+            getMedia()
+        }
     }
 
     override fun selectedPaths(paths: ArrayList<String>) {

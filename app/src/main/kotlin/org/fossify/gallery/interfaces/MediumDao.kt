@@ -20,6 +20,9 @@ interface MediumDao {
     @Query("SELECT COUNT(filename) FROM media WHERE deleted_ts = 0")
     fun getMediaCount(): Long
 
+    @Query("SELECT MAX(last_modified) FROM media WHERE deleted_ts = 0")
+    fun getMaxLastModified(): Long?
+
     @Query("SELECT COUNT(filename) FROM media WHERE deleted_ts = 0 AND is_favorite = 1")
     fun getFavoritesCount(): Long
 

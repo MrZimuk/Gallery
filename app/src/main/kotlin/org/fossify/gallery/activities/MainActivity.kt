@@ -112,6 +112,7 @@ import org.fossify.gallery.extensions.launchAbout
 import org.fossify.gallery.extensions.launchCamera
 import org.fossify.gallery.extensions.launchSettings
 import org.fossify.gallery.extensions.mediaDB
+import org.fossify.gallery.extensions.syncDeltaMedia
 import org.fossify.gallery.extensions.movePathsInRecycleBin
 import org.fossify.gallery.extensions.movePinnedDirectoriesToFront
 import org.fossify.gallery.extensions.openRecycleBin
@@ -651,6 +652,10 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
     private fun getDirectories() {
         if (mIsGettingDirs) {
             return
+        }
+
+        ensureBackgroundThread {
+            syncDeltaMedia()
         }
 
         mShouldStopFetching = true
