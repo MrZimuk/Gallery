@@ -331,7 +331,7 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
     override fun onDestroy() {
         super.onDestroy()
         if (!isChangingConfigurations) {
-            mMedia.clear()
+            mMedia = ArrayList()
             mLoadedPath = ""
             mFullscreenMediaModified = false
         }
@@ -363,7 +363,7 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
     override fun onActivityResult(requestCode: Int, resultCode: Int, resultData: Intent?) {
         if (requestCode == REQUEST_EDIT_IMAGE) {
             if (resultCode == RESULT_OK && resultData != null) {
-                mMedia.clear()
+                mMedia = ArrayList()
                 mLoadedPath = ""
                 ShowAllCache.clear()
                 refreshItems()
@@ -708,7 +708,7 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
         }
 
         mIsGettingMedia = true
-        if (mLoadedInitialPhotos) {
+        if (mLoadedInitialPhotos && !mShowAll) {
             startAsyncTask()
         } else {
             getCachedMedia(
@@ -725,7 +725,7 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
                     gotMedia(it, true)
                 }
 
-                if (shouldStartAsync) {
+                if (shouldStartAsync && !mShowAll) {
                     startAsyncTask()
                 } else {
                     mIsGettingMedia = false
@@ -1086,8 +1086,8 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
                 ShowAllCache.checkDelta(applicationContext) { hasChanged ->
                     if (hasChanged) {
                         runOnUiThread {
-                            binding.mediaRefreshLayout.isRefreshing = true
-                            startAsyncTask()
+                            ShowAllCache.clear()
+                            getMedia()
                         }
                     }
                 }

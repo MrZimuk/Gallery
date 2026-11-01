@@ -13,36 +13,37 @@ object ShowAllCache {
     private var cachedFilterMedia: Int = 0
     private var cachedSorting: Int = 0
     private var cachedGrouping: Int = 0
-    private var cachedAllowedFoldersHash: Int = 0
     private var latestMediaId: Long = 0L
     private var latestMediaDateId: Long = 0L
     private var mediaCount: Long = 0L
 
-    fun hasValidCache(filterMedia: Int, sorting: Int, grouping: Int, allowedFoldersHash: Int): Boolean {
-        return cachedMedia != null &&
+    fun hasValidCache(filterMedia: Int, sorting: Int, grouping: Int): Boolean {
+        val items = cachedMedia
+        return items != null &&
+            items.isNotEmpty() &&
             cachedFilterMedia == filterMedia &&
             cachedSorting == sorting &&
-            cachedGrouping == grouping &&
-            cachedAllowedFoldersHash == allowedFoldersHash
+            cachedGrouping == grouping
     }
 
-    fun getItems(): ArrayList<ThumbnailItem>? = cachedMedia
+    fun getItems(): ArrayList<ThumbnailItem>? {
+        val items = cachedMedia ?: return null
+        return if (items.isNotEmpty()) ArrayList(items) else null
+    }
 
     fun setCache(
         items: ArrayList<ThumbnailItem>,
         filterMedia: Int,
         sorting: Int,
         grouping: Int,
-        allowedFoldersHash: Int,
         mediaId: Long,
         mediaDateId: Long,
         count: Long
     ) {
-        cachedMedia = items
+        cachedMedia = ArrayList(items)
         cachedFilterMedia = filterMedia
         cachedSorting = sorting
         cachedGrouping = grouping
-        cachedAllowedFoldersHash = allowedFoldersHash
         latestMediaId = mediaId
         latestMediaDateId = mediaDateId
         mediaCount = count
@@ -93,7 +94,6 @@ object ShowAllCache {
         cachedFilterMedia = 0
         cachedSorting = 0
         cachedGrouping = 0
-        cachedAllowedFoldersHash = 0
         latestMediaId = 0L
         latestMediaDateId = 0L
         mediaCount = 0L

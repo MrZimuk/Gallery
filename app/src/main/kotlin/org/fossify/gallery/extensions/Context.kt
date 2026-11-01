@@ -950,9 +950,6 @@ private fun Context.getCachedShowAllMedia(
     getImagesOnly: Boolean,
     callback: (ArrayList<ThumbnailItem>) -> Unit
 ) {
-    val foldersToScan = mediaFetcher.getFoldersToScan()
-    val allowedFolders = foldersToScan.filter { !config.isFolderProtected(it) }.toHashSet()
-    val allowedFoldersHash = allowedFolders.hashCode()
     val targetFilter = when {
         getVideosOnly -> TYPE_VIDEOS
         getImagesOnly -> TYPE_IMAGES
@@ -961,9 +958,9 @@ private fun Context.getCachedShowAllMedia(
     val sorting = config.getFolderSorting(SHOW_ALL)
     val grouping = config.getFolderGrouping(SHOW_ALL)
 
-    if (ShowAllCache.hasValidCache(targetFilter, sorting, grouping, allowedFoldersHash)) {
+    if (ShowAllCache.hasValidCache(targetFilter, sorting, grouping)) {
         val cached = ShowAllCache.getItems()
-        if (cached != null) {
+        if (cached != null && cached.isNotEmpty()) {
             val tCacheHit = System.currentTimeMillis()
             Log.e(
                 "GALLERY_BENCH",
@@ -973,6 +970,9 @@ private fun Context.getCachedShowAllMedia(
             return
         }
     }
+
+    val foldersToScan = mediaFetcher.getFoldersToScan()
+    val allowedFolders = foldersToScan.filter { !config.isFolderProtected(it) }.toHashSet()
 
     val t0 = System.currentTimeMillis()
     val allMedia = mediaDB.getAllMedia()
@@ -1001,7 +1001,6 @@ private fun Context.getCachedShowAllMedia(
         filterMedia = targetFilter,
         sorting = sorting,
         grouping = grouping,
-        allowedFoldersHash = allowedFoldersHash,
         mediaId = getLatestMediaId(),
         mediaDateId = getLatestMediaByDateId(),
         count = mediaDB.getMediaCount()
