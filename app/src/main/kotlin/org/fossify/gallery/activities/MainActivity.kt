@@ -213,6 +213,7 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
         appLaunched(BuildConfig.APPLICATION_ID)
 
         if (savedInstanceState == null) {
+            config.showAll = false
             config.temporarilyShowHidden = false
             config.temporarilyShowExcluded = false
             config.tempSkipDeleteConfirmation = false
@@ -636,9 +637,7 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
             checkOTGPath()
             checkDefaultSpamFolders()
 
-            if (config.showAll) {
-                showAllMedia()
-            } else if (!mIsInitialFetchStarted || binding.directoriesGrid.adapter == null) {
+            if (!mIsInitialFetchStarted || binding.directoriesGrid.adapter == null) {
                 getDirectories()
             }
             mIsInitialFetchStarted = false
@@ -707,7 +706,6 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
             } else {
                 hideKeyboard()
                 startActivity(this)
-                finish()
             }
         }
     }

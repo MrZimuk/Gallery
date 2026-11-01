@@ -336,7 +336,8 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
             mFullscreenMediaModified = false
         }
 
-        if (config.showAll && !isChangingConfigurations) {
+        if (mShowAll && !isChangingConfigurations) {
+            config.showAll = false
             config.temporarilyShowHidden = false
             config.tempSkipDeleteConfirmation = false
             config.tempSkipRecycleBin = false
@@ -352,11 +353,18 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
             binding.mediaMenu.closeSearch()
             true
         } else {
-            if (config.showAll) {
+            if (mShowAll) {
+                config.showAll = false
                 appLockManager.lock()
             }
 
-            false
+            if (isTaskRoot) {
+                startActivity(Intent(this, MainActivity::class.java))
+                finish()
+                true
+            } else {
+                false
+            }
         }
     }
 
@@ -668,8 +676,12 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
     private fun switchToFolderView() {
         hideKeyboard()
         config.showAll = false
-        startActivity(Intent(this, MainActivity::class.java))
-        finish()
+        if (!isTaskRoot) {
+            finish()
+        } else {
+            startActivity(Intent(this, MainActivity::class.java))
+            finish()
+        }
     }
 
     private fun changeViewType() {
