@@ -233,7 +233,7 @@ class ViewPagerActivity : BaseViewerActivity(), ViewPager.OnPageChangeListener, 
         refreshMenuItems()
 
         window.decorView.setBackgroundColor(getProperBackgroundColor())
-        (MediaActivity.mMedia.clone() as ArrayList<ThumbnailItem>).filterIsInstanceTo(mMediaFiles, Medium::class.java)
+        MediaActivity.mMedia.filterIsInstanceTo(mMediaFiles, Medium::class.java)
 
         requestMediaPermissions {
             initViewPager(
@@ -275,10 +275,14 @@ class ViewPagerActivity : BaseViewerActivity(), ViewPager.OnPageChangeListener, 
 
         if (config.isThirdPartyIntent) {
             config.isThirdPartyIntent = false
+        }
 
-            if (intent.extras == null || isExternalIntent()) {
-                mMediaFiles.clear()
-            }
+        mMediaFiles.clear()
+        mSlideshowMedia.clear()
+        binding.viewPager.adapter = null
+        try {
+            Glide.get(this).clearMemory()
+        } catch (ignored: Exception) {
         }
     }
 
@@ -1073,6 +1077,7 @@ class ViewPagerActivity : BaseViewerActivity(), ViewPager.OnPageChangeListener, 
     private fun toggleFavorite() {
         val medium = getCurrentMedium() ?: return
         medium.isFavorite = !medium.isFavorite
+        MediaActivity.mFullscreenMediaModified = true
         ensureBackgroundThread {
             updateFavorite(medium.path, medium.isFavorite)
             if (medium.isFavorite) {
@@ -1145,6 +1150,7 @@ class ViewPagerActivity : BaseViewerActivity(), ViewPager.OnPageChangeListener, 
 
     private fun restoreFile() {
         restoreRecycleBinPath(getCurrentPath()) {
+            MediaActivity.mFullscreenMediaModified = true
             refreshViewPager()
         }
     }
@@ -1238,6 +1244,7 @@ class ViewPagerActivity : BaseViewerActivity(), ViewPager.OnPageChangeListener, 
                         tryDeleteFileDirItem(fileDirItem, false, false) {
                             mIgnoredPaths.remove(fileDirItem.path)
                             MediaActivity.mMedia.removeAll { (it as? Medium)?.path == fileDirItem.path }
+                            MediaActivity.mFullscreenMediaModified = true
                             if (media.isEmpty()) {
                                 deleteDirectoryIfEmpty()
                                 finish()
@@ -1274,6 +1281,7 @@ class ViewPagerActivity : BaseViewerActivity(), ViewPager.OnPageChangeListener, 
             tryDeleteFileDirItem(fileDirItem, false, true) {
                 mIgnoredPaths.remove(fileDirItem.path)
                 MediaActivity.mMedia.removeAll { (it as? Medium)?.path == fileDirItem.path }
+                MediaActivity.mFullscreenMediaModified = true
                 if (media.isEmpty()) {
                     deleteDirectoryIfEmpty()
                     finish()
@@ -1312,6 +1320,7 @@ class ViewPagerActivity : BaseViewerActivity(), ViewPager.OnPageChangeListener, 
                 path = it
                 name = it.getFilenameFromPath()
             }
+            MediaActivity.mFullscreenMediaModified = true
 
             ensureBackgroundThread {
                 updateDBMediaPath(oldPath, it)

@@ -319,15 +319,13 @@ class PhotoFragment : ViewPagerFragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
-        if (activity?.isDestroyed == false) {
-            binding.subsamplingView.recycle()
+        binding.subsamplingView.recycle()
 
-            try {
-                if (context != null) {
-                    Glide.with(requireContext()).clear(binding.gesturesView)
-                }
-            } catch (ignored: Exception) {
+        try {
+            if (context != null && activity?.isDestroyed == false) {
+                Glide.with(requireContext()).clear(binding.gesturesView)
             }
+        } catch (ignored: Exception) {
         }
 
         if (::mMedium.isInitialized) {

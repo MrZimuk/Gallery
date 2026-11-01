@@ -150,12 +150,22 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
     private val binding by viewBinding(ActivityMediaBinding::inflate)
 
     companion object {
+        private const val WAS_FULLSCREEN_VIEW_OPEN = "was_fullscreen_view_open"
+        private const val LOADED_INITIAL_PHOTOS = "loaded_initial_photos"
+
         var mMedia = ArrayList<ThumbnailItem>()
+        var mLoadedPath = ""
+        var mFullscreenMediaModified = false
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(binding.root)
+
+        if (savedInstanceState != null) {
+            mWasFullscreenViewOpen = savedInstanceState.getBoolean(WAS_FULLSCREEN_VIEW_OPEN, false)
+            mLoadedInitialPhotos = savedInstanceState.getBoolean(LOADED_INITIAL_PHOTOS, false)
+        }
 
         intent.apply {
             mIsGetImageIntent = getBooleanExtra(GET_IMAGE_INTENT, false)
@@ -250,27 +260,31 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
         binding.mediaEmptyTextPlaceholder2.setTextColor(getProperPrimaryColor())
         binding.mediaEmptyTextPlaceholder2.bringToFront()
 
-        if (mWasFullscreenViewOpen) {
+        val hasValidMedia = mMedia.isNotEmpty() && mLoadedPath == mPath
+        if (hasValidMedia) {
+            val wasFullscreen = mWasFullscreenViewOpen
             mWasFullscreenViewOpen = false
-            if (mMedia.isNotEmpty()) {
+            if (binding.mediaGrid.adapter == null) {
+                setupAdapter()
+            } else if (wasFullscreen && mFullscreenMediaModified) {
+                mFullscreenMediaModified = false
                 getMediaAdapter()?.updateMedia(mMedia)
-                checkLastMediaChanged()
-                return
             }
+            if (!mShowAll) {
+                checkLastMediaChanged()
+            }
+            return
         }
 
-        // do not refresh Random sorted files after opening a fullscreen image and going Back
-        val isRandomSorting = config.getFolderSorting(mPath) and SORT_BY_RANDOM != 0
-        if (mMedia.isEmpty() || !isRandomSorting || (isRandomSorting && !mWasFullscreenViewOpen)) {
-            if (shouldSkipAuthentication()) {
-                tryLoadGallery()
-            } else {
-                handleLockedFolderOpening(mPath) { success ->
-                    if (success) {
-                        tryLoadGallery()
-                    } else {
-                        finish()
-                    }
+        mWasFullscreenViewOpen = false
+        if (shouldSkipAuthentication()) {
+            tryLoadGallery()
+        } else {
+            handleLockedFolderOpening(mPath) { success ->
+                if (success) {
+                    tryLoadGallery()
+                } else {
+                    finish()
                 }
             }
         }
@@ -302,8 +316,20 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
         }
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(WAS_FULLSCREEN_VIEW_OPEN, mWasFullscreenViewOpen)
+        outState.putBoolean(LOADED_INITIAL_PHOTOS, mLoadedInitialPhotos)
+    }
+
     override fun onDestroy() {
         super.onDestroy()
+        if (!isChangingConfigurations) {
+            mMedia.clear()
+            mLoadedPath = ""
+            mFullscreenMediaModified = false
+        }
+
         if (config.showAll && !isChangingConfigurations) {
             config.temporarilyShowHidden = false
             config.tempSkipDeleteConfirmation = false
@@ -332,6 +358,7 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
         if (requestCode == REQUEST_EDIT_IMAGE) {
             if (resultCode == RESULT_OK && resultData != null) {
                 mMedia.clear()
+                mLoadedPath = ""
                 refreshItems()
             }
         }
@@ -553,7 +580,7 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
     }
 
     private fun checkLastMediaChanged() {
-        if (isDestroyed || config.getFolderSorting(mPath) and SORT_BY_RANDOM != 0) {
+        if (isDestroyed || mShowAll || config.getFolderSorting(mPath) and SORT_BY_RANDOM != 0) {
             return
         }
 
@@ -1023,6 +1050,7 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
         mIsGettingMedia = false
         checkLastMediaChanged()
         mMedia = media
+        mLoadedPath = mPath
 
         runOnUiThread {
             binding.loadingIndicator.hide()
@@ -1099,7 +1127,8 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
                 return@deleteFiles
             }
 
-            mMedia.removeAll { filtered.map { it.path }.contains((it as? Medium)?.path) }
+            val pathsToDelete = filtered.mapTo(HashSet()) { it.path }
+            mMedia.removeAll { pathsToDelete.contains((it as? Medium)?.path) }
 
             ensureBackgroundThread {
                 val useRecycleBin = config.useRecycleBin
