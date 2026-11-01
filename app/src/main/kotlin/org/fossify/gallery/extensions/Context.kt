@@ -41,6 +41,8 @@ import org.fossify.commons.extensions.getDocumentFile
 import org.fossify.commons.extensions.getDoesFilePathExist
 import org.fossify.commons.extensions.getDuration
 import org.fossify.commons.extensions.getFilenameFromPath
+import org.fossify.commons.extensions.getLatestMediaByDateId
+import org.fossify.commons.extensions.getLatestMediaId
 import org.fossify.commons.extensions.getLongValue
 import org.fossify.commons.extensions.getMimeTypeFromUri
 import org.fossify.commons.extensions.getOTGPublicPath
@@ -98,6 +100,7 @@ import org.fossify.gallery.helpers.RECYCLE_BIN
 import org.fossify.gallery.helpers.ROUNDED_CORNERS_NONE
 import org.fossify.gallery.helpers.ROUNDED_CORNERS_SMALL
 import org.fossify.gallery.helpers.SHOW_ALL
+import org.fossify.gallery.helpers.ShowAllCache
 import org.fossify.gallery.helpers.THUMBNAIL_FADE_DURATION_MS
 import org.fossify.gallery.helpers.TYPE_GIFS
 import org.fossify.gallery.helpers.TYPE_IMAGES
@@ -921,6 +924,92 @@ fun Context.getCachedDirectories(
     }
 }
 
+private fun filterShowAllMedia(
+    allMedia: List<Medium>,
+    targetFilter: Int,
+    shouldShowHidden: Boolean,
+    allowedFolders: Set<String>
+): ArrayList<Medium> {
+    val media = ArrayList<Medium>(allMedia.size)
+    for (medium in allMedia) {
+        if (targetFilter and medium.type == 0) continue
+        if (!shouldShowHidden && medium.path.contains("/.")) continue
+        val isFolderAllowed = allowedFolders.contains(medium.parentPath) ||
+            (medium.type == TYPE_PORTRAITS && allowedFolders.contains(medium.parentPath.getParentPath()))
+        if (isFolderAllowed) {
+            media.add(medium)
+        }
+    }
+    return media
+}
+
+private fun Context.getCachedShowAllMedia(
+    mediaFetcher: MediaFetcher,
+    startTotal: Long,
+    getVideosOnly: Boolean,
+    getImagesOnly: Boolean,
+    callback: (ArrayList<ThumbnailItem>) -> Unit
+) {
+    val foldersToScan = mediaFetcher.getFoldersToScan()
+    val allowedFolders = foldersToScan.filter { !config.isFolderProtected(it) }.toHashSet()
+    val allowedFoldersHash = allowedFolders.hashCode()
+    val targetFilter = when {
+        getVideosOnly -> TYPE_VIDEOS
+        getImagesOnly -> TYPE_IMAGES
+        else -> config.filterMedia
+    }
+    val sorting = config.getFolderSorting(SHOW_ALL)
+    val grouping = config.getFolderGrouping(SHOW_ALL)
+
+    if (ShowAllCache.hasValidCache(targetFilter, sorting, grouping, allowedFoldersHash)) {
+        val cached = ShowAllCache.getItems()
+        if (cached != null) {
+            val tCacheHit = System.currentTimeMillis()
+            Log.e(
+                "GALLERY_BENCH",
+                "getCachedMedia ShowAll: Cache HIT! ${cached.size} items in ${tCacheHit - startTotal}ms"
+            )
+            callback(cached)
+            return
+        }
+    }
+
+    val t0 = System.currentTimeMillis()
+    val allMedia = mediaDB.getAllMedia()
+    val tDb = System.currentTimeMillis()
+    val media = filterShowAllMedia(allMedia, targetFilter, config.shouldShowHidden, allowedFolders)
+    val tFilter = System.currentTimeMillis()
+    Log.e(
+        "GALLERY_BENCH",
+        "getCachedMedia ShowAll: folders=${t0 - startTotal}ms, db=${tDb - t0}ms (${allMedia.size}), " +
+            "filter=${tFilter - tDb}ms (${media.size})"
+    )
+
+    val tSortStart = System.currentTimeMillis()
+    mediaFetcher.sortMedia(media, sorting)
+    val tGroupStart = System.currentTimeMillis()
+    val grouped = mediaFetcher.groupMedia(media, SHOW_ALL)
+    val tGroupEnd = System.currentTimeMillis()
+    Log.e(
+        "GALLERY_BENCH",
+        "getCachedMedia sort=${tGroupStart - tSortStart}ms, group=${tGroupEnd - tGroupStart}ms, " +
+            "total=${tGroupEnd - startTotal}ms"
+    )
+
+    ShowAllCache.setCache(
+        items = grouped,
+        filterMedia = targetFilter,
+        sorting = sorting,
+        grouping = grouping,
+        allowedFoldersHash = allowedFoldersHash,
+        mediaId = getLatestMediaId(),
+        mediaDateId = getLatestMediaByDateId(),
+        count = mediaDB.getMediaCount()
+    )
+
+    callback(grouped)
+}
+
 fun Context.getCachedMedia(
     path: String,
     getVideosOnly: Boolean = false,
@@ -930,6 +1019,12 @@ fun Context.getCachedMedia(
     ensureBackgroundThread {
         val startTotal = System.currentTimeMillis()
         val mediaFetcher = MediaFetcher(this)
+
+        if (path.isEmpty()) {
+            getCachedShowAllMedia(mediaFetcher, startTotal, getVideosOnly, getImagesOnly, callback)
+            return@ensureBackgroundThread
+        }
+
         var media = ArrayList<Medium>()
         if (path == FAVORITES) {
             media.addAll(mediaDB.getFavorites())
@@ -942,39 +1037,7 @@ fun Context.getCachedMedia(
         val shouldShowHidden = config.shouldShowHidden
         val filterMedia = config.filterMedia
 
-        if (path.isEmpty()) {
-            val t0 = System.currentTimeMillis()
-            val foldersToScan = mediaFetcher.getFoldersToScan()
-            val allowedFolders = foldersToScan.filter { !config.isFolderProtected(it) }.toHashSet()
-            val allMedia = mediaDB.getAllMedia()
-            val tDb = System.currentTimeMillis()
-            media = ArrayList(allMedia.size)
-            for (medium in allMedia) {
-                val isFolderAllowed = allowedFolders.contains(medium.parentPath) ||
-                    (medium.type == TYPE_PORTRAITS && allowedFolders.contains(medium.parentPath.getParentPath()))
-                if (!isFolderAllowed) continue
-                if (!shouldShowHidden && medium.path.contains("/.")) continue
-                val isTypeMatch = when {
-                    getVideosOnly -> medium.type == TYPE_VIDEOS
-                    getImagesOnly -> medium.type == TYPE_IMAGES
-                    else -> (filterMedia and TYPE_IMAGES != 0 && medium.type == TYPE_IMAGES) ||
-                        (filterMedia and TYPE_VIDEOS != 0 && medium.type == TYPE_VIDEOS) ||
-                        (filterMedia and TYPE_GIFS != 0 && medium.type == TYPE_GIFS) ||
-                        (filterMedia and TYPE_RAWS != 0 && medium.type == TYPE_RAWS) ||
-                        (filterMedia and TYPE_SVGS != 0 && medium.type == TYPE_SVGS) ||
-                        (filterMedia and TYPE_PORTRAITS != 0 && medium.type == TYPE_PORTRAITS)
-                }
-                if (isTypeMatch) {
-                    media.add(medium)
-                }
-            }
-            val tFilter = System.currentTimeMillis()
-            Log.e(
-                "GALLERY_BENCH",
-                "getCachedMedia ShowAll: folders=${t0 - startTotal}ms, db=${tDb - t0}ms (${allMedia.size}), " +
-                    "filter=${tFilter - tDb}ms (${media.size})"
-            )
-        } else if (path != FAVORITES && path != RECYCLE_BIN) {
+        if (path != FAVORITES && path != RECYCLE_BIN) {
             val foldersToScan = arrayListOf(path)
             if (config.filterMedia and TYPE_PORTRAITS != 0) {
                 val foldersToAdd = ArrayList<String>()
@@ -1013,17 +1076,17 @@ fun Context.getCachedMedia(
             }) as ArrayList<Medium>
         }
 
-        val pathToUse = path.ifEmpty { SHOW_ALL }
         val tSortStart = System.currentTimeMillis()
-        mediaFetcher.sortMedia(media, config.getFolderSorting(pathToUse))
+        mediaFetcher.sortMedia(media, config.getFolderSorting(path))
         val tGroupStart = System.currentTimeMillis()
-        val grouped = mediaFetcher.groupMedia(media, pathToUse)
+        val grouped = mediaFetcher.groupMedia(media, path)
         val tGroupEnd = System.currentTimeMillis()
         Log.e(
             "GALLERY_BENCH",
             "getCachedMedia sort=${tGroupStart - tSortStart}ms, group=${tGroupEnd - tGroupStart}ms, " +
                 "total=${tGroupEnd - startTotal}ms"
         )
+
         callback(grouped.clone() as ArrayList<ThumbnailItem>)
         val OTGPath = config.OTGPath
 

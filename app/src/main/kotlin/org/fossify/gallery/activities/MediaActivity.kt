@@ -110,6 +110,7 @@ import org.fossify.gallery.helpers.VIDEO_PLAYER_SYSTEM
 import org.fossify.gallery.interfaces.MediaOperationsListener
 import org.fossify.gallery.models.Medium
 import org.fossify.gallery.models.ThumbnailItem
+import org.fossify.gallery.helpers.ShowAllCache
 import org.fossify.gallery.models.ThumbnailSection
 import java.io.File
 import java.io.IOException
@@ -174,7 +175,12 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
             mAllowPickingMultiple = getBooleanExtra(Intent.EXTRA_ALLOW_MULTIPLE, false)
         }
 
-        binding.mediaRefreshLayout.setOnRefreshListener { getMedia() }
+        binding.mediaRefreshLayout.setOnRefreshListener {
+            if (mShowAll) {
+                ShowAllCache.clear()
+            }
+            getMedia()
+        }
         try {
             mPath = intent.getStringExtra(DIRECTORY) ?: ""
         } catch (e: Exception) {
@@ -359,6 +365,7 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
             if (resultCode == RESULT_OK && resultData != null) {
                 mMedia.clear()
                 mLoadedPath = ""
+                ShowAllCache.clear()
                 refreshItems()
             }
         }
@@ -605,6 +612,9 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
     private fun showSortingDialog() {
         ChangeSortingDialog(this, false, true, mPath) {
             mLoadedInitialPhotos = false
+            if (mShowAll) {
+                ShowAllCache.clear()
+            }
             binding.mediaGrid.adapter = null
             getMedia()
         }
@@ -613,6 +623,9 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
     private fun showFilterMediaDialog() {
         FilterMediaDialog(this) {
             mLoadedInitialPhotos = false
+            if (mShowAll) {
+                ShowAllCache.clear()
+            }
             binding.mediaRefreshLayout.isRefreshing = true
             binding.mediaGrid.adapter = null
             getMedia()
@@ -1067,6 +1080,19 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
 
         mLatestMediaId = getLatestMediaId()
         mLatestMediaDateId = getLatestMediaByDateId()
+
+        if (mShowAll && isFromCache) {
+            ensureBackgroundThread {
+                ShowAllCache.checkDelta(applicationContext) { hasChanged ->
+                    if (hasChanged) {
+                        runOnUiThread {
+                            binding.mediaRefreshLayout.isRefreshing = true
+                            startAsyncTask()
+                        }
+                    }
+                }
+            }
+        }
         if (!isFromCache) {
             val mediaToInsert = mMedia
                 .filter { it is Medium && it.deletedTS == 0L }.map { it as Medium }
@@ -1129,6 +1155,7 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
 
             val pathsToDelete = filtered.mapTo(HashSet()) { it.path }
             mMedia.removeAll { pathsToDelete.contains((it as? Medium)?.path) }
+            pathsToDelete.forEach { ShowAllCache.removeMedia(it) }
 
             ensureBackgroundThread {
                 val useRecycleBin = config.useRecycleBin

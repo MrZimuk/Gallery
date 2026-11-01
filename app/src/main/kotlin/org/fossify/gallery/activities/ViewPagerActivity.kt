@@ -161,6 +161,7 @@ import org.fossify.gallery.helpers.ROTATE_BY_ASPECT_RATIO
 import org.fossify.gallery.helpers.ROTATE_BY_DEVICE_ROTATION
 import org.fossify.gallery.helpers.ROTATE_BY_SYSTEM_SETTING
 import org.fossify.gallery.helpers.SHOW_ALL
+import org.fossify.gallery.helpers.ShowAllCache
 import org.fossify.gallery.helpers.SHOW_FAVORITES
 import org.fossify.gallery.helpers.SHOW_NEXT_ITEM
 import org.fossify.gallery.helpers.SHOW_PREV_ITEM
@@ -1078,6 +1079,7 @@ class ViewPagerActivity : BaseViewerActivity(), ViewPager.OnPageChangeListener, 
         val medium = getCurrentMedium() ?: return
         medium.isFavorite = !medium.isFavorite
         MediaActivity.mFullscreenMediaModified = true
+        ShowAllCache.updateFavorite(medium.path, medium.isFavorite)
         ensureBackgroundThread {
             updateFavorite(medium.path, medium.isFavorite)
             if (medium.isFavorite) {
@@ -1245,6 +1247,7 @@ class ViewPagerActivity : BaseViewerActivity(), ViewPager.OnPageChangeListener, 
                             mIgnoredPaths.remove(fileDirItem.path)
                             MediaActivity.mMedia.removeAll { (it as? Medium)?.path == fileDirItem.path }
                             MediaActivity.mFullscreenMediaModified = true
+                            ShowAllCache.removeMedia(fileDirItem.path)
                             if (media.isEmpty()) {
                                 deleteDirectoryIfEmpty()
                                 finish()
@@ -1282,6 +1285,7 @@ class ViewPagerActivity : BaseViewerActivity(), ViewPager.OnPageChangeListener, 
                 mIgnoredPaths.remove(fileDirItem.path)
                 MediaActivity.mMedia.removeAll { (it as? Medium)?.path == fileDirItem.path }
                 MediaActivity.mFullscreenMediaModified = true
+                ShowAllCache.removeMedia(fileDirItem.path)
                 if (media.isEmpty()) {
                     deleteDirectoryIfEmpty()
                     finish()
