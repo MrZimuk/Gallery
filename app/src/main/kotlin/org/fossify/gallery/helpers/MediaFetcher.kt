@@ -828,35 +828,61 @@ class MediaFetcher(val context: Context) {
         return sizes
     }
 
+    private fun compareNames(o1: Medium, o2: Medium, useNumeric: Boolean): Int {
+        val name1 = o1.name.normalizeString().lowercase(Locale.getDefault())
+        val name2 = o2.name.normalizeString().lowercase(Locale.getDefault())
+        return if (useNumeric) {
+            AlphanumericComparator().compare(name1, name2)
+        } else {
+            name1.compareTo(name2)
+        }
+    }
+
+    private fun comparePaths(o1: Medium, o2: Medium, useNumeric: Boolean): Int {
+        val path1 = o1.path.lowercase(Locale.getDefault())
+        val path2 = o2.path.lowercase(Locale.getDefault())
+        return if (useNumeric) {
+            AlphanumericComparator().compare(path1, path2)
+        } else {
+            path1.compareTo(path2)
+        }
+    }
+
+    private fun compareDateWithTieBreaker(
+        date1: Long,
+        date2: Long,
+        o1: Medium,
+        o2: Medium,
+        useNumeric: Boolean
+    ): Int {
+        val sec1 = date1 / 1000
+        val sec2 = date2 / 1000
+        return if (sec1 != sec2) {
+            sec1.compareTo(sec2)
+        } else {
+            val nameComp = compareNames(o1, o2, useNumeric)
+            if (nameComp != 0) nameComp else o1.path.compareTo(o2.path)
+        }
+    }
+
     fun sortMedia(media: ArrayList<Medium>, sorting: Int) {
         if (sorting and SORT_BY_RANDOM != 0) {
             media.shuffle()
             return
         }
 
+        val useNumeric = sorting and SORT_USE_NUMERIC_VALUE != 0
         media.sortWith { o1, o2 ->
-            o1 as Medium
-            o2 as Medium
             var result = when {
-                sorting and SORT_BY_NAME != 0 -> {
-                    if (sorting and SORT_USE_NUMERIC_VALUE != 0) {
-                        AlphanumericComparator().compare(o1.name.normalizeString().lowercase(Locale.getDefault()), o2.name.normalizeString().lowercase(Locale.getDefault()))
-                    } else {
-                        o1.name.normalizeString().lowercase(Locale.getDefault()).compareTo(o2.name.normalizeString().lowercase(Locale.getDefault()))
-                    }
-                }
-
-                sorting and SORT_BY_PATH != 0 -> {
-                    if (sorting and SORT_USE_NUMERIC_VALUE != 0) {
-                        AlphanumericComparator().compare(o1.path.lowercase(Locale.getDefault()), o2.path.lowercase(Locale.getDefault()))
-                    } else {
-                        o1.path.lowercase(Locale.getDefault()).compareTo(o2.path.lowercase(Locale.getDefault()))
-                    }
-                }
-
+                sorting and SORT_BY_NAME != 0 -> compareNames(o1, o2, useNumeric)
+                sorting and SORT_BY_PATH != 0 -> comparePaths(o1, o2, useNumeric)
                 sorting and SORT_BY_SIZE != 0 -> o1.size.compareTo(o2.size)
-                sorting and SORT_BY_DATE_MODIFIED != 0 -> o1.modified.compareTo(o2.modified)
-                else -> o1.taken.compareTo(o2.taken)
+                sorting and SORT_BY_DATE_MODIFIED != 0 -> {
+                    compareDateWithTieBreaker(o1.modified, o2.modified, o1, o2, useNumeric)
+                }
+                else -> {
+                    compareDateWithTieBreaker(o1.taken, o2.taken, o1, o2, useNumeric)
+                }
             }
 
             if (sorting and SORT_DESCENDING != 0) {
