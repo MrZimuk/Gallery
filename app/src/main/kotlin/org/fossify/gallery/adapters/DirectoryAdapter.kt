@@ -140,9 +140,35 @@ class DirectoryAdapter(
     var dateFormat = config.dateFormat
     var timeFormat = activity.getTimeFormat()
 
+    private val pathToKeyMap = HashMap<String, Int>()
+    private val keyToDirMap = HashMap<Int, Directory>()
+    private var nextKey = 1
+
     init {
         setupDragListener(true)
         fillLockedFolders()
+        rebuildKeyMaps()
+    }
+
+    private fun rebuildKeyMaps() {
+        pathToKeyMap.clear()
+        keyToDirMap.clear()
+        nextKey = 1
+        for (dir in dirs) {
+            val key = nextKey++
+            pathToKeyMap[dir.path] = key
+            keyToDirMap[key] = dir
+        }
+    }
+
+    private fun getKeyForDir(dir: Directory): Int {
+        var key = pathToKeyMap[dir.path]
+        if (key == null) {
+            key = nextKey++
+            pathToKeyMap[dir.path] = key
+            keyToDirMap[key] = dir
+        }
+        return key
     }
 
     override fun getActionMenuId() = R.menu.cab_directories
@@ -228,9 +254,12 @@ class DirectoryAdapter(
 
     override fun getIsItemSelectable(position: Int) = true
 
-    override fun getItemSelectionKey(position: Int) = dirs.getOrNull(position)?.path?.hashCode()
+    override fun getItemSelectionKey(position: Int) = dirs.getOrNull(position)?.let(::getKeyForDir)
 
-    override fun getItemKeyPosition(key: Int) = dirs.indexOfFirst { it.path.hashCode() == key }
+    override fun getItemKeyPosition(key: Int): Int {
+        val dir = keyToDirMap[key] ?: return -1
+        return dirs.indexOfFirst { it.path == dir.path }
+    }
 
     override fun onActionModeCreated() {}
 
@@ -269,10 +298,12 @@ class DirectoryAdapter(
 
     private fun moveSelectedItemsToTop() {
         selectedKeys.toMutableList().reversed().forEach { key ->
-            val position = dirs.indexOfFirst { it.path.hashCode() == key }
-            val tempItem = dirs[position]
-            dirs.removeAt(position)
-            dirs.add(0, tempItem)
+            val position = getItemKeyPosition(key)
+            if (position != -1) {
+                val tempItem = dirs[position]
+                dirs.removeAt(position)
+                dirs.add(0, tempItem)
+            }
         }
 
         notifyDataSetChanged()
@@ -280,10 +311,12 @@ class DirectoryAdapter(
 
     private fun moveSelectedItemsToBottom() {
         selectedKeys.forEach { key ->
-            val position = dirs.indexOfFirst { it.path.hashCode() == key }
-            val tempItem = dirs[position]
-            dirs.removeAt(position)
-            dirs.add(dirs.size, tempItem)
+            val position = getItemKeyPosition(key)
+            if (position != -1) {
+                val tempItem = dirs[position]
+                dirs.removeAt(position)
+                dirs.add(dirs.size, tempItem)
+            }
         }
 
         notifyDataSetChanged()
@@ -469,6 +502,7 @@ class DirectoryAdapter(
 
                     currentDirectoriesHash = newDirs.hashCode()
                     dirs = newDirs
+                    rebuildKeyMaps()
 
                     finishActMode()
                     listener?.updateDirectories(newDirs)
@@ -802,7 +836,7 @@ class DirectoryAdapter(
 
     private fun getFirstSelectedItemPath() = getFirstSelectedItem()?.path
 
-    private fun getItemWithKey(key: Int): Directory? = dirs.firstOrNull { it.path.hashCode() == key }
+    private fun getItemWithKey(key: Int): Directory? = keyToDirMap[key]
 
     private fun fillLockedFolders() {
         lockedFolderPaths.clear()
@@ -816,6 +850,7 @@ class DirectoryAdapter(
         if (directories.hashCode() != currentDirectoriesHash) {
             currentDirectoriesHash = directories.hashCode()
             dirs = directories
+            rebuildKeyMaps()
             fillLockedFolders()
             notifyDataSetChanged()
             finishActMode()
@@ -833,7 +868,7 @@ class DirectoryAdapter(
     }
 
     private fun setupView(view: View, directory: Directory, holder: ViewHolder) {
-        val isSelected = selectedKeys.contains(directory.path.hashCode())
+        val isSelected = selectedKeys.contains(getKeyForDir(directory))
         bindItem(view).apply {
             dirPath?.text = "${directory.path.substringBeforeLast("/")}/"
             val thumbnailType = when {

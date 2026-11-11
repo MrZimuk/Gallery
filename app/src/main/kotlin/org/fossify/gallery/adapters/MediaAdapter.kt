@@ -131,8 +131,36 @@ class MediaAdapter(
     var dateFormat = config.dateFormat
     var timeFormat = activity.getTimeFormat()
 
+    private val pathToKeyMap = HashMap<String, Int>()
+    private val keyToMediumMap = HashMap<Int, Medium>()
+    private var nextKey = 1
+
     init {
         setupDragListener(true)
+        rebuildKeyMaps()
+    }
+
+    private fun rebuildKeyMaps() {
+        pathToKeyMap.clear()
+        keyToMediumMap.clear()
+        nextKey = 1
+        for (item in media) {
+            if (item is Medium) {
+                val key = nextKey++
+                pathToKeyMap[item.path] = key
+                keyToMediumMap[key] = item
+            }
+        }
+    }
+
+    private fun getKeyForMedium(medium: Medium): Int {
+        var key = pathToKeyMap[medium.path]
+        if (key == null) {
+            key = nextKey++
+            pathToKeyMap[medium.path] = key
+            keyToMediumMap[key] = medium
+        }
+        return key
     }
 
     override fun getActionMenuId() = R.menu.cab_media
@@ -244,9 +272,12 @@ class MediaAdapter(
 
     override fun getIsItemSelectable(position: Int) = !isASectionTitle(position)
 
-    override fun getItemSelectionKey(position: Int) = (media.getOrNull(position) as? Medium)?.path?.hashCode()
+    override fun getItemSelectionKey(position: Int) = (media.getOrNull(position) as? Medium)?.let(::getKeyForMedium)
 
-    override fun getItemKeyPosition(key: Int) = media.indexOfFirst { (it as? Medium)?.path?.hashCode() == key }
+    override fun getItemKeyPosition(key: Int): Int {
+        val medium = keyToMediumMap[key] ?: return -1
+        return media.indexOfFirst { (it as? Medium)?.path == medium.path }
+    }
 
     override fun onActionModeCreated() {}
 
@@ -628,13 +659,14 @@ class MediaAdapter(
 
     private fun getFirstSelectedItemPath() = getItemWithKey(selectedKeys.first())?.path
 
-    private fun getItemWithKey(key: Int): Medium? = media.firstOrNull { (it as? Medium)?.path?.hashCode() == key } as? Medium
+    private fun getItemWithKey(key: Int): Medium? = keyToMediumMap[key]
 
     fun updateMedia(newMedia: ArrayList<ThumbnailItem>) {
         val thumbnailItems = newMedia.clone() as ArrayList<ThumbnailItem>
         if (thumbnailItems.hashCode() != currentMediaHash) {
             currentMediaHash = thumbnailItems.hashCode()
             media = thumbnailItems
+            rebuildKeyMaps()
             notifyDataSetChanged()
             finishActMode()
         }
@@ -661,7 +693,7 @@ class MediaAdapter(
     }
 
     private fun setupThumbnail(view: View, medium: Medium) {
-        val isSelected = selectedKeys.contains(medium.path.hashCode())
+        val isSelected = selectedKeys.contains(getKeyForMedium(medium))
         bindItem(view, medium).apply {
             val padding = if (config.thumbnailSpacing <= 1) {
                 config.thumbnailSpacing
