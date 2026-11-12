@@ -30,7 +30,9 @@ private const val MAX_SUBDIRS_TO_TRAVERSE = 100
 data class MediaStoreFolderSummary(
 
     val folderCounts: HashMap<String, Int>,
-    val folderCanonicalPaths: HashMap<String, String>
+    val folderCanonicalPaths: HashMap<String, String>,
+    val folderMaxDateModified: HashMap<String, Long> = HashMap(),
+    val folderMaxDateTaken: HashMap<String, Long> = HashMap()
 )
 
 class MediaFetcher(val context: Context) {
@@ -122,12 +124,31 @@ class MediaFetcher(val context: Context) {
         }
     }
 
+    private fun updateFolderSummaryDates(
+        normParent: String,
+        dateModified: Long,
+        dateTaken: Long,
+        folderMaxDateModified: HashMap<String, Long>,
+        folderMaxDateTaken: HashMap<String, Long>
+    ) {
+        if (dateModified > (folderMaxDateModified[normParent] ?: 0L)) {
+            folderMaxDateModified[normParent] = dateModified
+        }
+        if (dateTaken > (folderMaxDateTaken[normParent] ?: 0L)) {
+            folderMaxDateTaken[normParent] = dateTaken
+        }
+    }
+
     private fun parseMediaStoreSummaryCursor(
         cursor: Cursor,
         folderCounts: HashMap<String, Int>,
-        folderCanonicalPaths: HashMap<String, String>
+        folderCanonicalPaths: HashMap<String, String>,
+        folderMaxDateModified: HashMap<String, Long>,
+        folderMaxDateTaken: HashMap<String, Long>
     ) {
         val dataIndex = cursor.getColumnIndex(Images.Media.DATA)
+        val dateModifiedIndex = cursor.getColumnIndex(Images.Media.DATE_MODIFIED)
+        val dateTakenIndex = cursor.getColumnIndex(Images.Media.DATE_TAKEN)
         if (dataIndex == -1) return
 
         val parentToNormParent = HashMap<String, String>(PARENT_CACHE_INITIAL_CAPACITY)
@@ -138,18 +159,30 @@ class MediaFetcher(val context: Context) {
         while (!shouldStop && cursor.moveToNext()) {
             val path = cursor.getString(dataIndex)
             val lastSlash = path?.lastIndexOf('/') ?: -1
-            if (lastSlash > 0) {
-                val isSameParent = lastParent != null && lastSlash == lastParent.length && path!!.startsWith(lastParent)
-                if (isSameParent) {
-                    lastCount++
-                } else {
-                    flushParentCount(lastNormParent, lastCount, folderCounts)
-                    val parent = path!!.substring(0, lastSlash)
-                    lastParent = parent
-                    lastNormParent = resolveNormParent(parent, parentToNormParent, folderCanonicalPaths)
-                    lastCount = 1
-                }
+            if (path == null || lastSlash <= 0) {
+                continue
             }
+
+            val dateModified = if (dateModifiedIndex != -1) cursor.getLong(dateModifiedIndex) * 1000L else 0L
+            val dateTaken = if (dateTakenIndex != -1) cursor.getLong(dateTakenIndex) else 0L
+
+            val isSameParent = lastParent != null &&
+                lastSlash == lastParent.length &&
+                path.startsWith(lastParent)
+            val normParent = if (isSameParent) {
+                lastCount++
+                lastNormParent!!
+            } else {
+                flushParentCount(lastNormParent, lastCount, folderCounts)
+                val parent = path.substring(0, lastSlash)
+                lastParent = parent
+                val resolved = resolveNormParent(parent, parentToNormParent, folderCanonicalPaths)
+                lastNormParent = resolved
+                lastCount = 1
+                resolved
+            }
+
+            updateFolderSummaryDates(normParent, dateModified, dateTaken, folderMaxDateModified, folderMaxDateTaken)
         }
 
         if (!shouldStop) {
@@ -248,15 +281,27 @@ class MediaFetcher(val context: Context) {
     fun getMediaStoreFolderSummary(): MediaStoreFolderSummary {
         val folderCounts = HashMap<String, Int>()
         val folderCanonicalPaths = HashMap<String, String>()
+        val folderMaxDateModified = HashMap<String, Long>()
+        val folderMaxDateTaken = HashMap<String, Long>()
         val filterMedia = context.config.filterMedia
         val uri = Files.getContentUri("external")
-        val projection = arrayOf(Images.Media.DATA)
+        val projection = arrayOf(
+            Images.Media.DATA,
+            Images.Media.DATE_MODIFIED,
+            Images.Media.DATE_TAKEN
+        )
         val selection = getSelectionQuery(filterMedia).ifEmpty { null }
 
         try {
             val cursor = context.contentResolver.query(uri, projection, selection, null, null)
             cursor?.use {
-                parseMediaStoreSummaryCursor(it, folderCounts, folderCanonicalPaths)
+                parseMediaStoreSummaryCursor(
+                    cursor = it,
+                    folderCounts = folderCounts,
+                    folderCanonicalPaths = folderCanonicalPaths,
+                    folderMaxDateModified = folderMaxDateModified,
+                    folderMaxDateTaken = folderMaxDateTaken
+                )
             }
         } catch (ignored: Exception) {
         }
@@ -266,7 +311,12 @@ class MediaFetcher(val context: Context) {
         } catch (ignored: Exception) {
         }
 
-        return MediaStoreFolderSummary(folderCounts, folderCanonicalPaths)
+        return MediaStoreFolderSummary(
+            folderCounts = folderCounts,
+            folderCanonicalPaths = folderCanonicalPaths,
+            folderMaxDateModified = folderMaxDateModified,
+            folderMaxDateTaken = folderMaxDateTaken
+        )
     }
 
     fun getFoldersToScan(knownFolders: Collection<String>? = null): ArrayList<String> {
@@ -1168,7 +1218,8 @@ class MediaFetcher(val context: Context) {
         if (!dirFile.exists() || !dirFile.isDirectory) return
 
         val diskModified = dirFile.lastModified()
-        if (known != null && diskModified <= known.modified) return
+        val maxFileModified = context.getFolderMaxFileModified(folderPath)
+        if (known != null && diskModified <= known.modified && maxFileModified <= known.modified) return
 
         val files = getFilesFrom(
             curPath = folderPath,
@@ -1195,6 +1246,8 @@ class MediaFetcher(val context: Context) {
         diskModified: Long,
         files: List<Medium>
     ) {
+        val maxFileModified = files.maxOfOrNull { it.modified } ?: 0L
+        val maxModified = maxOf(diskModified, maxFileModified)
         val isInternal = folderPath.startsWith(context.config.internalStoragePath)
         val dir = Directory(
             id = known?.id,
@@ -1202,7 +1255,7 @@ class MediaFetcher(val context: Context) {
             tmb = files.first().path,
             name = folderPath.getFilenameFromPath(),
             mediaCnt = files.size,
-            modified = diskModified,
+            modified = maxModified,
             taken = files.first().taken,
             size = files.sumOf { it.size },
             location = if (isInternal) LOCATION_INTERNAL else LOCATION_SD,

@@ -5,6 +5,7 @@ import android.util.Log
 import org.fossify.commons.extensions.getLatestMediaByDateId
 import org.fossify.commons.extensions.getLatestMediaId
 import org.fossify.gallery.extensions.getMediaRootsLastModifiedHash
+import org.fossify.gallery.extensions.getMediaStoreGeneration
 import org.fossify.gallery.extensions.mediaDB
 import org.fossify.gallery.extensions.syncDeltaMedia
 import org.fossify.gallery.models.Medium
@@ -19,6 +20,7 @@ object ShowAllCache {
     private var latestMediaDateId: Long = 0L
     private var mediaCount: Long = 0L
     private var latestFsHash: Long = 0L
+    private var latestGeneration: Long = 0L
 
     fun hasValidCache(filterMedia: Int, sorting: Int, grouping: Int): Boolean {
         val items = cachedMedia
@@ -42,7 +44,8 @@ object ShowAllCache {
         mediaId: Long,
         mediaDateId: Long,
         count: Long,
-        fsHash: Long = 0L
+        fsHash: Long = 0L,
+        generation: Long = 0L
     ) {
         cachedMedia = ArrayList(items)
         cachedFilterMedia = filterMedia
@@ -52,6 +55,7 @@ object ShowAllCache {
         latestMediaDateId = mediaDateId
         mediaCount = count
         latestFsHash = fsHash
+        latestGeneration = generation
         Log.e("GALLERY_BENCH", "ShowAllCache: cached ${items.size} items (count=$count, mediaId=$mediaId)")
     }
 
@@ -63,11 +67,13 @@ object ShowAllCache {
             val currentMediaDateId = context.getLatestMediaByDateId()
             val currentCount = context.mediaDB.getMediaCount()
             val currentFsHash = context.getMediaRootsLastModifiedHash()
+            val currentGeneration = context.getMediaStoreGeneration()
             val changed = syncCount > 0 ||
                 currentMediaId != latestMediaId ||
                 currentMediaDateId != latestMediaDateId ||
                 currentCount != mediaCount ||
-                (latestFsHash != 0L && currentFsHash != latestFsHash)
+                (latestFsHash != 0L && currentFsHash != latestFsHash) ||
+                (latestGeneration != 0L && currentGeneration != latestGeneration)
             if (changed) {
                 Log.e(
                     "GALLERY_BENCH",
@@ -107,5 +113,6 @@ object ShowAllCache {
         latestMediaDateId = 0L
         mediaCount = 0L
         latestFsHash = 0L
+        latestGeneration = 0L
     }
 }

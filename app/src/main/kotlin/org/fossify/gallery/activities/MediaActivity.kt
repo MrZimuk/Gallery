@@ -72,7 +72,9 @@ import org.fossify.gallery.extensions.emptyAndDisableTheRecycleBin
 import org.fossify.gallery.extensions.emptyTheRecycleBin
 import org.fossify.gallery.extensions.favoritesDB
 import org.fossify.gallery.extensions.getCachedMedia
+import org.fossify.gallery.extensions.getFolderMaxFileModified
 import org.fossify.gallery.extensions.getHumanizedFilename
+import org.fossify.gallery.extensions.getMediaStoreGeneration
 import org.fossify.gallery.extensions.isDownloadsFolder
 import org.fossify.gallery.extensions.launchAbout
 import org.fossify.gallery.extensions.launchCamera
@@ -135,6 +137,8 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
     private var mLatestMediaId = 0L
     private var mLatestMediaDateId = 0L
     private var mLatestFolderModified = 0L
+    private var mLatestFolderMaxModified = 0L
+    private var mLatestGeneration = 0L
     private var mLastMediaHandler = Handler()
     private var mTempShowHiddenHandler = Handler()
     private var mCurrAsyncTask: GetMediaAsynctask? = null
@@ -278,8 +282,26 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
                 mFullscreenMediaModified = false
                 getMediaAdapter()?.updateMedia(mMedia)
             }
-            if (!mShowAll) {
-                checkLastMediaChanged()
+            if (wasFullscreen) {
+                if (!mShowAll) {
+                    checkLastMediaChanged()
+                }
+                return
+            }
+
+            if (mShowAll) {
+                ensureBackgroundThread {
+                    ShowAllCache.checkDelta(applicationContext) { hasChanged ->
+                        if (hasChanged) {
+                            runOnUiThread {
+                                ShowAllCache.clear()
+                                getMedia()
+                            }
+                        }
+                    }
+                }
+            } else {
+                getMedia()
             }
             return
         }
@@ -596,6 +618,18 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
         binding.mediaFastscroller.setScrollVertically(!scrollHorizontally)
     }
 
+    private fun hasFolderMediaChanged(
+        folderModified: Long,
+        maxFileModified: Long,
+        mediaId: Long,
+        mediaDateId: Long,
+        generation: Long
+    ): Boolean {
+        if (mLatestFolderModified != folderModified || mLatestFolderMaxModified != maxFileModified) return true
+        if (mLatestMediaId != mediaId || mLatestMediaDateId != mediaDateId) return true
+        return mLatestGeneration != 0L && generation != mLatestGeneration
+    }
+
     private fun checkLastMediaChanged() {
         if (isDestroyed || mShowAll || config.getFolderSorting(mPath) and SORT_BY_RANDOM != 0) {
             return
@@ -605,15 +639,16 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
         mLastMediaHandler.postDelayed({
             ensureBackgroundThread {
                 val folderModified = if (mPath.isNotEmpty()) File(mPath).lastModified() else 0L
+                val maxFileModified = if (mPath.isNotEmpty()) getFolderMaxFileModified(mPath) else 0L
                 val mediaId = getLatestMediaId()
                 val mediaDateId = getLatestMediaByDateId()
-                if (mLatestFolderModified != folderModified ||
-                    mLatestMediaId != mediaId ||
-                    mLatestMediaDateId != mediaDateId
-                ) {
+                val generation = getMediaStoreGeneration()
+                if (hasFolderMediaChanged(folderModified, maxFileModified, mediaId, mediaDateId, generation)) {
                     mLatestFolderModified = folderModified
+                    mLatestFolderMaxModified = maxFileModified
                     mLatestMediaId = mediaId
                     mLatestMediaDateId = mediaDateId
+                    mLatestGeneration = generation
                     runOnUiThread {
                         getMedia()
                     }
@@ -1100,6 +1135,8 @@ class MediaActivity : SimpleActivity(), MediaOperationsListener {
         mLatestMediaId = getLatestMediaId()
         mLatestMediaDateId = getLatestMediaByDateId()
         mLatestFolderModified = if (mPath.isNotEmpty()) File(mPath).lastModified() else 0L
+        mLatestFolderMaxModified = if (mPath.isNotEmpty()) getFolderMaxFileModified(mPath) else 0L
+        mLatestGeneration = getMediaStoreGeneration()
 
         if (mShowAll && isFromCache) {
             ensureBackgroundThread {

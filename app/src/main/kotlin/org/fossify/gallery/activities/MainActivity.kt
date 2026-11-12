@@ -32,6 +32,7 @@ import org.fossify.commons.extensions.getParentPath
 import org.fossify.commons.extensions.getLatestMediaByDateId
 import org.fossify.commons.extensions.getLatestMediaId
 import org.fossify.gallery.extensions.getMediaRootsLastModifiedHash
+import org.fossify.gallery.extensions.getMediaStoreGeneration
 import org.fossify.commons.extensions.getMimeType
 import org.fossify.commons.extensions.getProperBackgroundColor
 import org.fossify.commons.extensions.getProperPrimaryColor
@@ -185,6 +186,7 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
     private var mLatestMediaId = 0L
     private var mLatestMediaDateId = 0L
     private var mLatestFsHash = 0L
+    private var mLatestGeneration = 0L
 
     // used at "Group direct subfolders" for navigation
     private var mCurrentPathPrefix = ""
@@ -642,6 +644,8 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
 
             if (!mIsInitialFetchStarted || binding.directoriesGrid.adapter == null) {
                 getDirectories()
+            } else if (config.appRunCount > 1) {
+                checkLastMediaChanged(immediate = true)
             }
             mIsInitialFetchStarted = false
 
@@ -1219,6 +1223,17 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
         }
     }
 
+    private fun isFolderDateChanged(
+        directory: Directory,
+        summaryMod: Long,
+        summaryTaken: Long,
+        diskMod: Long
+    ): Boolean {
+        if (summaryMod > 0L && Math.abs(summaryMod - directory.modified) >= 1000L) return true
+        if (diskMod > 0L && (diskMod - directory.modified) >= 1000L) return true
+        return summaryTaken > 0L && Math.abs(summaryTaken - directory.taken) >= 1000L
+    }
+
     private fun reconcileCachedDirectory(
         directory: Directory,
         summary: MediaStoreFolderSummary,
@@ -1239,20 +1254,38 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
             } else {
                 foldersToRescan.add(directory)
             }
-        } else if (currentCount != directory.mediaCnt) {
+            return
+        }
+
+        val summaryMod = summary.folderMaxDateModified[normPath] ?: 0L
+        val summaryTaken = summary.folderMaxDateTaken[normPath] ?: 0L
+        val dirFile = File(path)
+        val diskMod = if (dirFile.exists() && dirFile.isDirectory) dirFile.lastModified() else 0L
+
+        if (currentCount != directory.mediaCnt || isFolderDateChanged(directory, summaryMod, summaryTaken, diskMod)) {
             foldersToRescan.add(directory)
         }
     }
 
-    private fun rescanDirectory(
+    private fun fetchMediaForRescan(
         directory: Directory,
-        scanConfig: FolderScanConfig,
-        dirPathsToRemove: ArrayList<String>
-    ): Boolean {
+        scanConfig: FolderScanConfig
+    ): ArrayList<Medium> {
         val getProperDateTaken = shouldGetProperDateTaken(directory.path)
         val getProperLastModified = shouldGetProperLastModified(directory.path)
 
-        val curMedia = mLastMediaFetcher!!.getFilesFrom(
+        val lastModifieds = if (getProperLastModified) {
+            mLastMediaFetcher?.getFolderLastModifieds(directory.path) ?: HashMap()
+        } else {
+            HashMap()
+        }
+        val dateTakens = if (getProperDateTaken) {
+            mLastMediaFetcher?.getFolderDateTakens(directory.path) ?: HashMap()
+        } else {
+            HashMap()
+        }
+
+        return mLastMediaFetcher!!.getFilesFrom(
             curPath = directory.path,
             isPickImage = scanConfig.getImagesOnly,
             isPickVideo = scanConfig.getVideosOnly,
@@ -1261,11 +1294,47 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
             getProperFileSize = scanConfig.getProperFileSize,
             favoritePaths = scanConfig.favoritePaths,
             getVideoDurations = false,
-            lastModifieds = HashMap(),
-            dateTakens = HashMap(),
+            lastModifieds = lastModifieds,
+            dateTakens = dateTakens,
             android11Files = scanConfig.android11Files
         )
+    }
 
+    private fun syncRescannedMedia(
+        directory: Directory,
+        curMedia: ArrayList<Medium>,
+        scanConfig: FolderScanConfig
+    ) {
+        if (!directory.isRecycleBin() && !directory.areFavorites()) {
+            Thread {
+                try {
+                    mediaDB.insertAll(curMedia)
+                } catch (ignored: Exception) {
+                }
+            }.start()
+        }
+
+        if (!directory.isRecycleBin()) {
+            getCachedMedia(directory.path, scanConfig.getVideosOnly, scanConfig.getImagesOnly) {
+                val mediaToDelete = ArrayList<Medium>()
+                it.forEach { item ->
+                    if (!curMedia.contains(item)) {
+                        (item as? Medium)?.let { medium ->
+                            mediaToDelete.add(medium)
+                        }
+                    }
+                }
+                mediaDB.deleteMedia(*mediaToDelete.toTypedArray())
+            }
+        }
+    }
+
+    private fun rescanDirectory(
+        directory: Directory,
+        scanConfig: FolderScanConfig,
+        dirPathsToRemove: ArrayList<String>
+    ): Boolean {
+        val curMedia = fetchMediaForRescan(directory, scanConfig)
         if (curMedia.isEmpty()) {
             if (directory.path != config.tempFolderPath) {
                 dirPathsToRemove.add(directory.path)
@@ -1296,30 +1365,7 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
             }
 
             updateDBDirectory(directory)
-            if (!directory.isRecycleBin() && !directory.areFavorites()) {
-                Thread {
-                    try {
-                        mediaDB.insertAll(curMedia)
-                    } catch (ignored: Exception) {
-                    }
-                }.start()
-            }
-
-            if (!directory.isRecycleBin()) {
-                getCachedMedia(directory.path, scanConfig.getVideosOnly, scanConfig.getImagesOnly) {
-                    val mediaToDelete = ArrayList<Medium>()
-                    it.forEach { item ->
-                        if (!curMedia.contains(item)) {
-                            val medium = item as? Medium
-                            val path = medium?.path
-                            if (path != null) {
-                                mediaToDelete.add(medium)
-                            }
-                        }
-                    }
-                    mediaDB.deleteMedia(*mediaToDelete.toTypedArray())
-                }
-            }
+            syncRescannedMedia(directory, curMedia, scanConfig)
             return true
         }
         return false
@@ -1565,6 +1611,7 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
         mLoadedInitialPhotos = true
         config.lastScanMaxMediaId = maxOf(config.lastScanMaxMediaId, getLatestMediaId())
         config.lastScanTimestamp = System.currentTimeMillis() / 1000
+        mLatestGeneration = getMediaStoreGeneration()
         if (config.appRunCount > 1) {
             checkLastMediaChanged()
         }
@@ -1868,6 +1915,7 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
                 mLatestMediaId = getLatestMediaId()
                 mLatestMediaDateId = getLatestMediaByDateId()
                 mLatestFsHash = getMediaRootsLastModifiedHash()
+                mLatestGeneration = getMediaStoreGeneration()
                 if (config.lastScanMaxMediaId == 0L && mLatestMediaId > 0L) {
                     config.lastScanMaxMediaId = mLatestMediaId
                     config.lastScanTimestamp = System.currentTimeMillis() / 1000
@@ -2074,32 +2122,48 @@ class MainActivity : SimpleActivity(), DirectoryOperationsListener {
     }
 
 
-    private fun checkLastMediaChanged() {
+    private fun hasMediaChanged(
+        mediaId: Long,
+        mediaDateId: Long,
+        fsHash: Long,
+        generation: Long
+    ): Boolean {
+        if (mLatestMediaId != mediaId || mLatestMediaDateId != mediaDateId) return true
+        if (mLatestFsHash != fsHash) return true
+        return mLatestGeneration != 0L && generation != mLatestGeneration
+    }
+
+    private fun checkLastMediaChanged(immediate: Boolean = false) {
         if (isDestroyed) {
             return
         }
 
-        mLastMediaHandler.postDelayed({
+        mLastMediaHandler.removeCallbacksAndMessages(null)
+        val checkRunnable = Runnable {
             ensureBackgroundThread {
                 val mediaId = getLatestMediaId()
                 val mediaDateId = getLatestMediaByDateId()
                 val fsHash = getMediaRootsLastModifiedHash()
-                if (mLatestMediaId != mediaId ||
-                    mLatestMediaDateId != mediaDateId ||
-                    mLatestFsHash != fsHash
-                ) {
+                val generation = getMediaStoreGeneration()
+                if (hasMediaChanged(mediaId, mediaDateId, fsHash, generation)) {
                     mLatestMediaId = mediaId
                     mLatestMediaDateId = mediaDateId
                     mLatestFsHash = fsHash
+                    mLatestGeneration = generation
                     runOnUiThread {
                         getDirectories()
                     }
                 } else {
-                    mLastMediaHandler.removeCallbacksAndMessages(null)
                     checkLastMediaChanged()
                 }
             }
-        }, LAST_MEDIA_CHECK_PERIOD)
+        }
+
+        if (immediate) {
+            checkRunnable.run()
+        } else {
+            mLastMediaHandler.postDelayed(checkRunnable, LAST_MEDIA_CHECK_PERIOD)
+        }
     }
 
     private fun checkRecycleBinItems() {

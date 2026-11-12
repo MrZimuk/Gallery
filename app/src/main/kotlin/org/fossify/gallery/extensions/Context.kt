@@ -79,6 +79,7 @@ import org.fossify.commons.helpers.SORT_BY_SIZE
 import org.fossify.commons.helpers.SORT_DESCENDING
 import org.fossify.commons.helpers.SORT_USE_NUMERIC_VALUE
 import org.fossify.commons.helpers.ensureBackgroundThread
+import org.fossify.commons.helpers.isRPlus
 import org.fossify.commons.helpers.sumByLong
 import org.fossify.commons.views.MySquareImageView
 import org.fossify.gallery.R
@@ -1007,7 +1008,8 @@ private fun Context.getCachedShowAllMedia(
         mediaId = getLatestMediaId(),
         mediaDateId = getLatestMediaByDateId(),
         count = mediaDB.getMediaCount(),
-        fsHash = getMediaRootsLastModifiedHash()
+        fsHash = getMediaRootsLastModifiedHash(),
+        generation = getMediaStoreGeneration()
     )
 
     callback(grouped)
@@ -1695,3 +1697,35 @@ fun Context.getMediaRootsLastModifiedHash(): Long {
     }
     return hash
 }
+
+fun Context.getFolderMaxFileModified(folderPath: String): Long {
+    val dir = File(folderPath)
+    if (!dir.exists() || !dir.isDirectory) return 0L
+    val files = dir.listFiles() ?: return 0L
+    var maxMod = dir.lastModified()
+    for (file in files) {
+        if (file.isFile && !file.name.startsWith(".")) {
+            val mod = file.lastModified()
+            if (mod > maxMod) {
+                maxMod = mod
+            }
+        }
+    }
+    return maxMod
+}
+
+fun Context.getMediaStoreGeneration(): Long {
+    return if (isRPlus()) {
+        try {
+            android.provider.MediaStore.getGeneration(
+                this,
+                android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY
+            )
+        } catch (ignored: Exception) {
+            0L
+        }
+    } else {
+        0L
+    }
+}
+
